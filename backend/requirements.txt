@@ -11,11 +11,11 @@ alembic==1.13.2
 psycopg2-binary==2.9.9
 pgvector==0.3.2
 
-# AI / LLM
-anthropic==0.39.0
+# AI / LLM (DeepSeek via OpenAI-compatible API)
+openai>=1.54.0,<2
 langchain==0.3.3
-langchain-anthropic==0.2.3
-langchain-core==0.3.10
+langchain-core>=0.3.10,<0.4
+langchain-openai>=0.2.8
 
 # Validation & Config
 pydantic==2.9.2

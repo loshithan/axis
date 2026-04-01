@@ -4,9 +4,8 @@ Runs on a schedule (not triggered by user messages).
 Scans active shifts, generates compliance reports, updates retention dashboard.
 """
 from datetime import datetime, date
-from anthropic import Anthropic
 
-client = Anthropic()
+from agents.deepseek import chat_completion, has_deepseek_key
 
 
 COMPLIANCE_SYSTEM_PROMPT = """You are the AXIS Compliance Agent. You run on a scheduled basis to audit 
@@ -53,7 +52,7 @@ def run_compliance_check(sbu_code: str, shifts_data: list, workers_data: list, s
     burnout_risks = _check_burnout_risks(workers_data, sbu_config)
     fairness = _calculate_fairness_summary(workers_data)
 
-    # Use Claude to generate human-readable report and recommendations
+    # Use DeepSeek to generate human-readable report and recommendations
     context = f"""SBU: {sbu_config.get('name', sbu_code)}
 Date: {date.today().isoformat()}
 
@@ -69,25 +68,33 @@ FAIRNESS METRICS:
 Generate the compliance report with actionable recommendations.
 """
 
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=2000,
-        system=COMPLIANCE_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": context}]
-    )
-
     import json
+
+    raw = ""
+    if has_deepseek_key():
+        try:
+            raw = chat_completion(
+                system=COMPLIANCE_SYSTEM_PROMPT,
+                user=context,
+                max_tokens=2000,
+            )
+        except Exception:
+            raw = ""
     try:
-        report = json.loads(response.content[0].text)
+        report = json.loads(raw) if raw else None
     except json.JSONDecodeError:
+        report = None
+    if not report:
         report = {
             "report_date": date.today().isoformat(),
             "sbu_code": sbu_code,
             "violations": violations,
             "burnout_risks": burnout_risks,
             "fairness_summary": fairness,
-            "recommendations": ["Unable to generate AI recommendations. Review data manually."],
-            "raw_response": response.content[0].text
+            "recommendations": [
+                "Unable to generate AI recommendations (set DEEPSEEK_API_KEY or review data manually)."
+            ],
+            "raw_response": raw or None,
         }
 
     return report

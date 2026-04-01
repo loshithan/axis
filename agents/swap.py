@@ -3,8 +3,9 @@ AXIS Agent 3: Swap Agent
 Activates when a worker submits a leave request.
 Operates without human intervention to find a valid replacement.
 """
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
+
+from agents.deepseek import has_deepseek_key, langchain_chat_model
 from agents.tools import SWAP_TOOLS
 
 SWAP_SYSTEM_PROMPT = """You are the AXIS Swap Agent. You activate when a worker submits a leave request.
@@ -37,11 +38,9 @@ CRITICAL:
 
 def create_swap_agent():
     """Create the Swap Agent with tool access."""
-    llm = ChatAnthropic(
-        model="claude-sonnet-4-20250514",
-        temperature=0,
-        max_tokens=2048,
-    )
+    if not has_deepseek_key():
+        raise RuntimeError("DEEPSEEK_API_KEY is required for the swap agent")
+    llm = langchain_chat_model(max_tokens=2048, temperature=0)
     return llm.bind_tools(SWAP_TOOLS)
 
 

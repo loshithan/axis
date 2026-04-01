@@ -26,21 +26,24 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: axis-backend
-    environment:
-      DATABASE_URL: postgresql+asyncpg://axis_user:axis_dev_password@db:5432/axis
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
-      ENVIRONMENT: development
     ports:
-      - "8000:8000"
+      - "8001:8001"
     volumes:
       - ./backend:/app
       - ./agents:/app/agents
       - ./configs:/app/configs
+    environment:
+      DATABASE_URL: postgresql+asyncpg://axis_user:axis_dev_password@db:5432/axis
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      AXIS_API_BASE: http://127.0.0.1:8001
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
+      ENVIRONMENT: development
     depends_on:
       db:
         condition: service_healthy
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 
   # ── Next.js Frontend ──
   frontend:
@@ -49,9 +52,9 @@ services:
       dockerfile: Dockerfile
     container_name: axis-frontend
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_API_URL: http://localhost:8001
     ports:
-      - "3000:3000"
+      - "3001:3001"
     volumes:
       - ./frontend/src:/app/src
     depends_on:

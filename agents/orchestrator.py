@@ -4,9 +4,8 @@ Every message from a manager hits this agent first.
 It parses intent, extracts parameters, loads SBU config, and routes.
 """
 import json
-from anthropic import Anthropic
 
-client = Anthropic()
+from agents.deepseek import chat_completion, has_deepseek_key
 
 ORCHESTRATOR_SYSTEM_PROMPT = """You are the AXIS Orchestrator Agent. Your role is to understand manager messages 
 and route them to the correct specialist agent.
@@ -47,17 +46,13 @@ def classify_intent(message: str, sbu_code: str, session_id: str) -> dict:
     Parse a manager's natural language message and classify the intent.
     Returns structured routing information for the specialist agent.
     """
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=500,
+    result_text = chat_completion(
         system=ORCHESTRATOR_SYSTEM_PROMPT,
-        messages=[{
-            "role": "user",
-            "content": f"SBU Context: {sbu_code}\nSession: {session_id}\n\nManager message: {message}"
-        }]
+        user=(
+            f"SBU Context: {sbu_code}\nSession: {session_id}\n\nManager message: {message}"
+        ),
+        max_tokens=500,
     )
-
-    result_text = response.content[0].text
     try:
         result = json.loads(result_text)
     except json.JSONDecodeError:
@@ -102,8 +97,16 @@ def process_message(message: str, sbu_code: str, session_id: str) -> dict:
     2. Load SBU config
     3. Return routing decision with config context
     """
-    # Step 1: Classify
-    routing = classify_intent(message, sbu_code, session_id)
+    if has_deepseek_key():
+        routing = classify_intent(message, sbu_code, session_id)
+    else:
+        routing = {
+            "intent": "query",
+            "routed_to": "direct_response",
+            "extracted_params": {"sbu_code": sbu_code},
+            "confidence": 0.0,
+            "reasoning": "DEEPSEEK_API_KEY not set — no LLM routing",
+        }
 
     # Step 2: Load config
     try:

@@ -3,11 +3,13 @@ AXIS Agent Tool Definitions
 LangChain tool wrappers that call the FastAPI backend endpoints.
 These are the tools the AI agents have access to.
 """
+import os
+
 import httpx
 from langchain_core.tools import tool
 from typing import Optional
 
-API_BASE = "http://localhost:8000"
+API_BASE = os.getenv("AXIS_API_BASE", "http://localhost:8001")
 
 
 @tool

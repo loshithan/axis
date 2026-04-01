@@ -75,6 +75,7 @@ class ShiftType(Base):
     id = Column(Integer, primary_key=True)
     sbu_id = Column(Integer, ForeignKey("sbus.id"), nullable=False)
     name = Column(String(100), nullable=False)  # e.g., "Morning ICU"
+    code = Column(String(50), nullable=False)
     start_time = Column(Time, nullable=False)
     end_time = Column(Time, nullable=False)
     required_certifications = Column(JSON, default=list)  # List of cert codes
@@ -82,6 +83,8 @@ class ShiftType(Base):
     department_code = Column(String(50), nullable=False)
 
     sbu = relationship("SBU", back_populates="shift_types")
+
+    __table_args__ = (UniqueConstraint("sbu_id", "code"),)
 
 
 class Worker(Base):

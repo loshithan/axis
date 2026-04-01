@@ -3,8 +3,9 @@ AXIS Agent 2: Scheduler Agent (ReAct Loop)
 Uses a Reason-Act-Observe loop to fill shift slots one by one.
 Iterates until every slot is filled or escalates unresolvable conflicts.
 """
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import SystemMessage, HumanMessage
+
+from agents.deepseek import has_deepseek_key, langchain_chat_model
 from agents.tools import SCHEDULER_TOOLS
 
 SCHEDULER_SYSTEM_PROMPT = """You are the AXIS Scheduler Agent. You fill shift slots one by one using a 
@@ -38,16 +39,10 @@ Work through every slot methodically. Do not rush or skip validation.
 
 def create_scheduler_agent():
     """Create the Scheduler Agent with ReAct loop using LangChain."""
-    llm = ChatAnthropic(
-        model="claude-sonnet-4-20250514",
-        temperature=0,
-        max_tokens=4096,
-    )
-
-    # Bind tools to the LLM
-    llm_with_tools = llm.bind_tools(SCHEDULER_TOOLS)
-
-    return llm_with_tools
+    if not has_deepseek_key():
+        raise RuntimeError("DEEPSEEK_API_KEY is required for the scheduler agent")
+    llm = langchain_chat_model(max_tokens=4096, temperature=0)
+    return llm.bind_tools(SCHEDULER_TOOLS)
 
 
 def run_scheduler(schedule_params: dict, sbu_config: dict) -> dict:

@@ -187,3 +187,38 @@ class OrchestratorOutput(BaseModel):
     routed_to: str  # "scheduler", "swap_agent", "direct_response"
     extracted_params: dict
     sbu_config_loaded: bool
+
+
+class ResolveSwapRequest(BaseModel):
+    leave_request_id: int
+
+
+class NotifyManagerResponse(BaseModel):
+    logged: bool
+    email_sent: bool = False
+
+
+class ShiftListItem(BaseModel):
+    id: int
+    worker_name: str
+    shift_type_name: str
+    department_code: str
+    date: date
+    start_time: time
+    end_time: time
+    status: str
+
+
+class DepartmentItem(BaseModel):
+    id: int
+    code: str
+    name: str
+
+
+class ShiftTypeItem(BaseModel):
+    id: int
+    code: str
+    name: str
+    department_code: str
+    start_time: time
+    end_time: time
