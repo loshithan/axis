@@ -1,0 +1,117 @@
+"""
+AXIS Agent 1: Orchestrator Agent
+Every message from a manager hits this agent first.
+It parses intent, extracts parameters, loads SBU config, and routes.
+"""
+import json
+from anthropic import Anthropic
+
+client = Anthropic()
+
+ORCHESTRATOR_SYSTEM_PROMPT = """You are the AXIS Orchestrator Agent. Your role is to understand manager messages 
+and route them to the correct specialist agent.
+
+You do NOT schedule, swap, or validate. You ONLY route.
+
+For every message, determine:
+1. Intent: "schedule" | "swap" | "query" | "report"
+2. SBU context (from session or message)
+3. Extracted parameters
+
+RESPOND ONLY WITH JSON (no markdown, no backticks):
+{
+    "intent": "schedule|swap|query|report",
+    "routed_to": "scheduler|swap_agent|direct_response",
+    "extracted_params": {
+        "department_code": "...",
+        "date_range_start": "YYYY-MM-DD",
+        "date_range_end": "YYYY-MM-DD",
+        "shift_type": "...",
+        "headcount": 1,
+        "constraints": {}
+    },
+    "confidence": 0.95,
+    "reasoning": "Brief explanation of why this intent was chosen"
+}
+
+Intent classification rules:
+- "schedule": Any request to create, assign, or generate shifts/rosters
+- "swap": Any request about leave, replacement, coverage, or shift exchange
+- "query": Questions about staff, availability, schedule status
+- "report": Requests for compliance reports, fairness summaries, dashboards
+"""
+
+
+def classify_intent(message: str, sbu_code: str, session_id: str) -> dict:
+    """
+    Parse a manager's natural language message and classify the intent.
+    Returns structured routing information for the specialist agent.
+    """
+    response = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=500,
+        system=ORCHESTRATOR_SYSTEM_PROMPT,
+        messages=[{
+            "role": "user",
+            "content": f"SBU Context: {sbu_code}\nSession: {session_id}\n\nManager message: {message}"
+        }]
+    )
+
+    result_text = response.content[0].text
+    try:
+        result = json.loads(result_text)
+    except json.JSONDecodeError:
+        # Fallback: try to extract JSON from the response
+        import re
+        json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
+        if json_match:
+            result = json.loads(json_match.group())
+        else:
+            result = {
+                "intent": "query",
+                "routed_to": "direct_response",
+                "extracted_params": {},
+                "confidence": 0.0,
+                "reasoning": "Failed to parse intent"
+            }
+
+    # Ensure sbu_code is in the params
+    result.setdefault("extracted_params", {})
+    result["extracted_params"]["sbu_code"] = sbu_code
+
+    return result
+
+
+def load_sbu_config(sbu_code: str) -> dict:
+    """Load the SBU configuration profile from the database or file."""
+    # TODO: Load from DB in production. For MVP, load from JSON file.
+    import os
+    config_path = os.path.join(
+        os.path.dirname(__file__), "..", "configs", f"{sbu_code}.json"
+    )
+    if os.path.exists(config_path):
+        with open(config_path, "r") as f:
+            return json.load(f)
+    raise FileNotFoundError(f"SBU config not found: {sbu_code}")
+
+
+def process_message(message: str, sbu_code: str, session_id: str) -> dict:
+    """
+    Full Orchestrator pipeline:
+    1. Classify intent
+    2. Load SBU config
+    3. Return routing decision with config context
+    """
+    # Step 1: Classify
+    routing = classify_intent(message, sbu_code, session_id)
+
+    # Step 2: Load config
+    try:
+        sbu_config = load_sbu_config(sbu_code)
+        routing["sbu_config_loaded"] = True
+        routing["sbu_config"] = sbu_config
+    except FileNotFoundError:
+        routing["sbu_config_loaded"] = False
+        routing["sbu_config"] = {}
+
+    return routing

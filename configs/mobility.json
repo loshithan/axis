@@ -1,0 +1,107 @@
+{
+  "sbu_code": "mobility",
+  "name": "Hemas Mobility",
+  "timezone": "Asia/Colombo",
+  "max_weekly_hours": 48,
+  "min_rest_hours": 10,
+  "overtime_threshold": 48,
+  "burnout_consecutive_shift_threshold": 6,
+  "departments": [
+    {
+      "code": "ground_crew",
+      "name": "Ground Operations",
+      "manager_role": "Ground Operations Manager"
+    },
+    {
+      "code": "maritime_ops",
+      "name": "Maritime Operations",
+      "manager_role": "Maritime Ops Supervisor"
+    },
+    {
+      "code": "dispatch",
+      "name": "Dispatch & Logistics",
+      "manager_role": "Dispatch Manager"
+    }
+  ],
+  "shift_types": [
+    {
+      "name": "Morning Ground Ops",
+      "code": "morning_ground",
+      "department_code": "ground_crew",
+      "start_time": "05:00",
+      "end_time": "13:00",
+      "duration_hours": 8,
+      "required_certifications": ["ground_ops_certified", "safety_trained"],
+      "min_headcount": 4
+    },
+    {
+      "name": "Afternoon Ground Ops",
+      "code": "afternoon_ground",
+      "department_code": "ground_crew",
+      "start_time": "13:00",
+      "end_time": "21:00",
+      "duration_hours": 8,
+      "required_certifications": ["ground_ops_certified", "safety_trained"],
+      "min_headcount": 4
+    },
+    {
+      "name": "Night Ground Ops",
+      "code": "night_ground",
+      "department_code": "ground_crew",
+      "start_time": "21:00",
+      "end_time": "05:00",
+      "duration_hours": 8,
+      "required_certifications": ["ground_ops_certified"],
+      "min_headcount": 2
+    },
+    {
+      "name": "Maritime Day Watch",
+      "code": "day_maritime",
+      "department_code": "maritime_ops",
+      "start_time": "06:00",
+      "end_time": "18:00",
+      "duration_hours": 12,
+      "required_certifications": ["maritime_certified", "safety_trained"],
+      "min_headcount": 3
+    },
+    {
+      "name": "Maritime Night Watch",
+      "code": "night_maritime",
+      "department_code": "maritime_ops",
+      "start_time": "18:00",
+      "end_time": "06:00",
+      "duration_hours": 12,
+      "required_certifications": ["maritime_certified", "safety_trained"],
+      "min_headcount": 2
+    },
+    {
+      "name": "Dispatch Day Shift",
+      "code": "day_dispatch",
+      "department_code": "dispatch",
+      "start_time": "07:00",
+      "end_time": "19:00",
+      "duration_hours": 12,
+      "required_certifications": ["dispatch_certified"],
+      "min_headcount": 2
+    }
+  ],
+  "certifications": [
+    {"code": "ground_ops_certified", "name": "Ground Operations Certification"},
+    {"code": "maritime_certified", "name": "Maritime Operations Certification"},
+    {"code": "dispatch_certified", "name": "Dispatch & Logistics Certification"},
+    {"code": "safety_trained", "name": "Safety & Compliance Training"},
+    {"code": "aviation_certified", "name": "Aviation Ground Handling"}
+  ],
+  "fairness_weights": {
+    "overtime_penalty": -20,
+    "consecutive_shifts_penalty": -15,
+    "underutilisation_bonus": 15,
+    "underutilisation_threshold": 0.7
+  },
+  "notification_preferences": {
+    "email_enabled": true,
+    "push_enabled": true,
+    "manager_summary_frequency": "daily",
+    "compliance_report_frequency": "weekly"
+  }
+}

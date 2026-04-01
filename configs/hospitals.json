@@ -1,0 +1,132 @@
+{
+  "sbu_code": "hospitals",
+  "name": "Hemas Hospitals",
+  "timezone": "Asia/Colombo",
+  "max_weekly_hours": 40,
+  "min_rest_hours": 11,
+  "overtime_threshold": 40,
+  "burnout_consecutive_shift_threshold": 5,
+  "departments": [
+    {
+      "code": "icu",
+      "name": "Intensive Care Unit",
+      "manager_role": "Head Nurse - ICU"
+    },
+    {
+      "code": "emergency",
+      "name": "Emergency Department",
+      "manager_role": "Head Nurse - Emergency"
+    },
+    {
+      "code": "ward_general",
+      "name": "General Ward",
+      "manager_role": "Ward Manager"
+    },
+    {
+      "code": "ot",
+      "name": "Operation Theatre",
+      "manager_role": "OT Supervisor"
+    }
+  ],
+  "shift_types": [
+    {
+      "name": "Morning ICU",
+      "code": "morning_icu",
+      "department_code": "icu",
+      "start_time": "06:00",
+      "end_time": "14:00",
+      "duration_hours": 8,
+      "required_certifications": ["icu_certified", "bls"],
+      "min_headcount": 3
+    },
+    {
+      "name": "Afternoon ICU",
+      "code": "afternoon_icu",
+      "department_code": "icu",
+      "start_time": "14:00",
+      "end_time": "22:00",
+      "duration_hours": 8,
+      "required_certifications": ["icu_certified", "bls"],
+      "min_headcount": 3
+    },
+    {
+      "name": "Night ICU",
+      "code": "night_icu",
+      "department_code": "icu",
+      "start_time": "22:00",
+      "end_time": "06:00",
+      "duration_hours": 8,
+      "required_certifications": ["icu_certified", "bls"],
+      "min_headcount": 2
+    },
+    {
+      "name": "Morning Emergency",
+      "code": "morning_emergency",
+      "department_code": "emergency",
+      "start_time": "06:00",
+      "end_time": "14:00",
+      "duration_hours": 8,
+      "required_certifications": ["emergency_certified", "bls", "acls"],
+      "min_headcount": 4
+    },
+    {
+      "name": "Afternoon Emergency",
+      "code": "afternoon_emergency",
+      "department_code": "emergency",
+      "start_time": "14:00",
+      "end_time": "22:00",
+      "duration_hours": 8,
+      "required_certifications": ["emergency_certified", "bls", "acls"],
+      "min_headcount": 4
+    },
+    {
+      "name": "Night Emergency",
+      "code": "night_emergency",
+      "department_code": "emergency",
+      "start_time": "22:00",
+      "end_time": "06:00",
+      "duration_hours": 8,
+      "required_certifications": ["emergency_certified", "bls"],
+      "min_headcount": 3
+    },
+    {
+      "name": "Morning General Ward",
+      "code": "morning_ward",
+      "department_code": "ward_general",
+      "start_time": "07:00",
+      "end_time": "15:00",
+      "duration_hours": 8,
+      "required_certifications": ["registered_nurse"],
+      "min_headcount": 5
+    },
+    {
+      "name": "Afternoon General Ward",
+      "code": "afternoon_ward",
+      "department_code": "ward_general",
+      "start_time": "15:00",
+      "end_time": "23:00",
+      "duration_hours": 8,
+      "required_certifications": ["registered_nurse"],
+      "min_headcount": 4
+    }
+  ],
+  "certifications": [
+    {"code": "icu_certified", "name": "ICU Certification"},
+    {"code": "emergency_certified", "name": "Emergency Nursing Certification"},
+    {"code": "bls", "name": "Basic Life Support"},
+    {"code": "acls", "name": "Advanced Cardiac Life Support"},
+    {"code": "registered_nurse", "name": "Registered Nurse License"}
+  ],
+  "fairness_weights": {
+    "overtime_penalty": -20,
+    "consecutive_shifts_penalty": -15,
+    "underutilisation_bonus": 15,
+    "underutilisation_threshold": 0.7
+  },
+  "notification_preferences": {
+    "email_enabled": true,
+    "push_enabled": true,
+    "manager_summary_frequency": "daily",
+    "compliance_report_frequency": "weekly"
+  }
+}
