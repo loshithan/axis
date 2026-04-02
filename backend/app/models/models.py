@@ -105,7 +105,7 @@ class Worker(Base):
     department = relationship("Department", back_populates="workers")
     shifts = relationship("Shift", back_populates="worker")
     availability = relationship("Availability", back_populates="worker")
-    leave_requests = relationship("LeaveRequest", back_populates="worker")
+    leave_requests = relationship("LeaveRequest", back_populates="worker", foreign_keys="[LeaveRequest.worker_id]")
 
 
 class Availability(Base):
@@ -163,7 +163,7 @@ class LeaveRequest(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     resolved_at = Column(DateTime)
 
-    worker = relationship("Worker", back_populates="leave_requests", foreign_keys=[worker_id])
+    worker = relationship("Worker", back_populates="leave_requests", foreign_keys="[LeaveRequest.worker_id]")
     shift = relationship("Shift")
     replacement = relationship("Worker", foreign_keys=[replacement_worker_id])
 

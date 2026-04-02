@@ -173,3 +173,293 @@ main.wrap {
   margin: 0 auto;
   padding: 1.25rem 1.5rem 3rem;
 }
+
+/* ── react-big-calendar dark theme ── */
+.rbc-wrap {
+  margin-top: 0.75rem;
+}
+
+.rbc-calendar {
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font);
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+/* toolbar */
+.rbc-toolbar {
+  padding: 0.6rem 0.75rem;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.rbc-toolbar button {
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.rbc-toolbar button:hover {
+  background: var(--border);
+}
+
+.rbc-toolbar button.rbc-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.rbc-toolbar .rbc-toolbar-label {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+/* header row (day names) */
+.rbc-header {
+  background: var(--bg);
+  border-bottom: 1px solid var(--border) !important;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.4rem 0;
+}
+
+.rbc-header a,
+.rbc-header a:visited {
+  color: var(--text);
+  text-decoration: none;
+}
+
+/* grid lines */
+.rbc-time-content,
+.rbc-time-view,
+.rbc-month-view {
+  border-color: var(--border) !important;
+}
+
+.rbc-time-slot,
+.rbc-timeslot-group,
+.rbc-day-slot .rbc-time-slot {
+  border-color: var(--border) !important;
+}
+
+.rbc-time-gutter .rbc-timeslot-group {
+  border-right: 1px solid var(--border);
+}
+
+.rbc-label {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.rbc-day-bg + .rbc-day-bg,
+.rbc-month-row + .rbc-month-row {
+  border-color: var(--border) !important;
+}
+
+.rbc-off-range-bg {
+  background: color-mix(in srgb, var(--bg) 60%, var(--surface));
+}
+
+.rbc-today {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface)) !important;
+}
+
+.rbc-current-time-indicator {
+  background-color: var(--accent);
+}
+
+/* events */
+.rbc-event {
+  border: none !important;
+  outline: none !important;
+}
+
+.rbc-event.rbc-selected {
+  filter: brightness(1.2);
+}
+
+.rbc-event-label {
+  font-size: 0.7rem;
+  opacity: 0.85;
+}
+
+.rbc-show-more {
+  color: var(--accent);
+  font-size: 0.78rem;
+  background: transparent;
+}
+
+/* month view date numbers */
+.rbc-date-cell {
+  color: var(--muted);
+  font-size: 0.8rem;
+  padding: 0.2rem 0.4rem;
+}
+
+.rbc-date-cell.rbc-now {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* ── Teams-style schedule grid ── */
+.schedule-scroll {
+  overflow-x: auto;
+  margin-top: 0.5rem;
+}
+
+.schedule-grid {
+  display: grid;
+  min-width: max-content;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 0.82rem;
+}
+
+.sched-corner {
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.sched-day-header {
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 0.45rem 0.6rem;
+  text-align: center;
+  min-width: 110px;
+}
+
+.sched-day-header .day-name {
+  font-size: 0.7rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.sched-day-header .day-date {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-top: 1px;
+}
+
+.sched-day-header.today .day-date {
+  color: var(--accent);
+}
+
+.sched-worker {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 0.5rem 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 160px;
+}
+
+.sched-worker .avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent-dim);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.sched-cell {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 0.35rem 0.4rem;
+  min-width: 110px;
+  min-height: 56px;
+  vertical-align: top;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.sched-cell.today-col {
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+}
+
+.shift-block {
+  border-radius: 5px;
+  padding: 0.25rem 0.45rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 0.78rem;
+  line-height: 1.3;
+  cursor: default;
+}
+
+.shift-block .sb-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shift-block .sb-time {
+  font-size: 0.7rem;
+  opacity: 0.85;
+}
+
+/* status colours */
+.shift-block.status-assigned {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-left: 3px solid var(--accent);
+  color: var(--text);
+}
+
+.shift-block.status-confirmed {
+  background: color-mix(in srgb, var(--success) 20%, transparent);
+  border-left: 3px solid var(--success);
+  color: var(--text);
+}
+
+.shift-block.status-open {
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  border-left: 3px solid var(--warn);
+  color: var(--text);
+}
+
+.shift-block.status-escalated {
+  background: color-mix(in srgb, var(--error) 18%, transparent);
+  border-left: 3px solid var(--error);
+  color: var(--text);
+}
+
+.shift-block.status-default {
+  background: color-mix(in srgb, var(--muted) 18%, transparent);
+  border-left: 3px solid var(--muted);
+  color: var(--text);
+}

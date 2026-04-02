@@ -10,6 +10,7 @@ import {
   type ShiftType,
   type Sbu,
 } from "@/lib/api";
+import { ShiftCalendar } from "@/components/ShiftCalendar";
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -287,42 +288,7 @@ export default function Home() {
             </label>
           </div>
           {listErr && <p className="err">{listErr}</p>}
-          <div style={{ overflowX: "auto" }}>
-            <table className="grid">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Shift</th>
-                  <th>Worker</th>
-                  <th>Time</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {shifts.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} style={{ color: "var(--muted)" }}>
-                      No shifts in range (seed DB and generate, or widen dates).
-                    </td>
-                  </tr>
-                ) : (
-                  shifts.map((s) => (
-                    <tr key={s.id}>
-                      <td>{s.date}</td>
-                      <td>{s.shift_type_name}</td>
-                      <td>{s.worker_name}</td>
-                      <td>
-                        {s.start_time}–{s.end_time}
-                      </td>
-                      <td>
-                        <span className="badge">{s.status}</span>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+          <ShiftCalendar shifts={shifts} initialDate={new Date(listStart)} />
         </div>
       </main>
     </>

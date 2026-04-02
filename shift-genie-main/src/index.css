@@ -1,0 +1,207 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap');
+
+@layer base {
+  :root {
+    --background: 222 47% 6%;
+    --foreground: 210 40% 92%;
+
+    --card: 222 40% 10%;
+    --card-foreground: 210 40% 92%;
+
+    --popover: 222 40% 10%;
+    --popover-foreground: 210 40% 92%;
+
+    --primary: 174 72% 46%;
+    --primary-foreground: 222 47% 6%;
+
+    --secondary: 222 30% 16%;
+    --secondary-foreground: 210 40% 85%;
+
+    --muted: 222 30% 14%;
+    --muted-foreground: 215 20% 55%;
+
+    --accent: 174 72% 46%;
+    --accent-foreground: 222 47% 6%;
+
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 222 25% 18%;
+    --input: 222 25% 18%;
+    --ring: 174 72% 46%;
+
+    --radius: 0.75rem;
+
+    --chat-bg: 222 40% 8%;
+    --chat-user: 174 72% 46%;
+    --chat-agent: 222 30% 16%;
+    --shift-nurse: 174 72% 46%;
+    --shift-doctor: 262 72% 55%;
+    --shift-tech: 32 90% 55%;
+    --shift-admin: 340 72% 55%;
+
+    --sidebar-background: 222 40% 8%;
+    --sidebar-foreground: 210 40% 92%;
+    --sidebar-primary: 174 72% 46%;
+    --sidebar-primary-foreground: 222 47% 6%;
+    --sidebar-accent: 222 30% 16%;
+    --sidebar-accent-foreground: 210 40% 92%;
+    --sidebar-border: 222 25% 18%;
+    --sidebar-ring: 174 72% 46%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', sans-serif;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Space Grotesk', sans-serif;
+  }
+}
+
+/* React Big Calendar custom theme */
+.rbc-calendar {
+  font-family: 'Inter', sans-serif;
+  background: transparent;
+}
+
+.rbc-toolbar {
+  margin-bottom: 1rem;
+  gap: 0.5rem;
+}
+
+.rbc-toolbar button {
+  color: hsl(210 40% 85%);
+  border: 1px solid hsl(222 25% 18%);
+  background: hsl(222 30% 16%);
+  border-radius: 0.5rem;
+  padding: 0.4rem 1rem;
+  font-size: 0.85rem;
+  transition: all 0.2s;
+}
+
+.rbc-toolbar button:hover {
+  background: hsl(174 72% 46% / 0.15);
+  border-color: hsl(174 72% 46% / 0.4);
+}
+
+.rbc-toolbar button.rbc-active {
+  background: hsl(174 72% 46% / 0.2);
+  border-color: hsl(174 72% 46%);
+  color: hsl(174 72% 56%);
+}
+
+.rbc-toolbar .rbc-toolbar-label {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  font-size: 1.1rem;
+  color: hsl(210 40% 92%);
+}
+
+.rbc-header {
+  background: hsl(222 30% 12%);
+  border-bottom: 1px solid hsl(222 25% 18%) !important;
+  padding: 0.6rem 0.5rem;
+  font-weight: 500;
+  font-size: 0.8rem;
+  color: hsl(215 20% 55%);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.rbc-month-view,
+.rbc-time-view {
+  border: 1px solid hsl(222 25% 18%);
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+.rbc-month-row + .rbc-month-row {
+  border-top: 1px solid hsl(222 25% 18%);
+}
+
+.rbc-day-bg {
+  background: hsl(222 40% 8%);
+}
+
+.rbc-day-bg + .rbc-day-bg {
+  border-left: 1px solid hsl(222 25% 18%);
+}
+
+.rbc-off-range-bg {
+  background: hsl(222 40% 6%);
+}
+
+.rbc-today {
+  background: hsl(174 72% 46% / 0.06) !important;
+}
+
+.rbc-date-cell {
+  padding: 0.3rem 0.5rem;
+  font-size: 0.85rem;
+  color: hsl(215 20% 55%);
+}
+
+.rbc-date-cell.rbc-now {
+  color: hsl(174 72% 56%);
+  font-weight: 600;
+}
+
+.rbc-event {
+  border-radius: 0.4rem !important;
+  padding: 0.2rem 0.5rem !important;
+  font-size: 0.78rem !important;
+  border: none !important;
+  font-weight: 500;
+}
+
+.rbc-event.rbc-selected {
+  box-shadow: 0 0 0 2px hsl(174 72% 46%);
+}
+
+.rbc-show-more {
+  color: hsl(174 72% 56%);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.rbc-time-content {
+  border-top: 1px solid hsl(222 25% 18%);
+}
+
+.rbc-timeslot-group {
+  border-bottom: 1px solid hsl(222 25% 15%);
+}
+
+.rbc-time-slot {
+  color: hsl(215 20% 45%);
+  font-size: 0.75rem;
+}
+
+.rbc-time-header-content {
+  border-left: 1px solid hsl(222 25% 18%);
+}
+
+.rbc-time-content > * + * > * {
+  border-left: 1px solid hsl(222 25% 18%);
+}
+
+.rbc-current-time-indicator {
+  background-color: hsl(174 72% 46%);
+  height: 2px;
+}

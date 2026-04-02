@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(pg_isready -h localhost -p 5432)",
+      "Bash(psql -U axis_user -h localhost -p 5432 -d axis -c \"SELECT 1\")",
+      "Bash(curl -s http://localhost:8001/health)",
+      "Bash(curl -s http://localhost:8001/meta/sbus)",
+      "Bash(docker-compose ps:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(curl -s \"http://localhost:8001/meta/departments?sbu_code=hospitals\")"
+    ]
+  }
+}
