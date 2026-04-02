@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker compose:*)",
+      "Bash(curl -s -X POST http://localhost:8001/orchestrator/process -H \"Content-Type: application/json\" -d '{\"message\":\"schedule shifts\",\"sbu_code\":\"hospitals\",\"session_id\":\"test\"}')",
+      "Bash(docker exec:*)",
+      "Bash(docker run:*)",
+      "Bash(docker restart:*)",
+      "Bash(curl -s \"http://localhost:8001/meta/sbus\")",
+      "Bash(curl -s -X POST http://localhost:8001/schedule/generate -H \"Content-Type: application/json\" -d \"{\\\\\"sbu_code\\\\\":\\\\\"hospitals\\\\\",\\\\\"department_code\\\\\":\\\\\"icu\\\\\",\\\\\"date_range_start\\\\\":\\\\\"2026-04-01\\\\\",\\\\\"date_range_end\\\\\":\\\\\"2026-04-07\\\\\",\\\\\"headcount_per_shift\\\\\":1,\\\\\"session_id\\\\\":\\\\\"3badcf28-cbb3-47a0-8fd6-70b8bf786a78\\\\\"}\")",
+      "Bash(curl -s -X POST http://localhost:8001/orchestrator/process -H \"Content-Type: application/json\" -d \"{\\\\\"message\\\\\":\\\\\"create shift from 10-15 may 3am - 5am\\\\\",\\\\\"sbu_code\\\\\":\\\\\"hospitals\\\\\",\\\\\"session_id\\\\\":\\\\\"test-123\\\\\"}\")",
+      "Bash(ls \"C:\\\\Users\\\\User\\\\Desktop\\\\Hemas_implementation\\\\axis\"/.env*)",
+      "Bash(curl:*)"
+    ]
+  }
+}

@@ -1,27 +1,23 @@
-import { useState, useCallback } from 'react';
+import { AxisProvider } from '@/context/AxisContext';
+import { ContextBar } from '@/components/ContextBar';
 import { ChatPanel } from '@/components/ChatPanel';
 import { ShiftCalendar } from '@/components/ShiftCalendar';
-import { Shift } from '@/types/shift';
 
 const Index = () => {
-  const [shifts, setShifts] = useState<Shift[]>([]);
-
-  const handleShiftsCreated = useCallback((newShifts: Shift[]) => {
-    setShifts(prev => [...prev, ...newShifts]);
-  }, []);
-
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
-      {/* Chat Panel - Left Side */}
-      <div className="w-[380px] flex-shrink-0">
-        <ChatPanel onShiftsCreated={handleShiftsCreated} />
+    <AxisProvider>
+      <div className="flex flex-col h-screen overflow-hidden bg-background">
+        <ContextBar />
+        <div className="flex flex-1 min-h-0">
+          <div className="w-[380px] flex-shrink-0">
+            <ChatPanel />
+          </div>
+          <div className="flex-1 min-w-0">
+            <ShiftCalendar />
+          </div>
+        </div>
       </div>
-
-      {/* Calendar - Right Side */}
-      <div className="flex-1 min-w-0">
-        <ShiftCalendar shifts={shifts} />
-      </div>
-    </div>
+    </AxisProvider>
   );
 };
 

@@ -792,7 +792,10 @@ async def orchestrator_process_message(message: str, sbu_code: str, session_id: 
         return orch_pm(message, sbu_code, session_id)
 
     if os.getenv("DEEPSEEK_API_KEY"):
-        return await asyncio.to_thread(_run)
+        try:
+            return await asyncio.to_thread(_run)
+        except Exception as e:
+            logger.warning("Orchestrator LLM call failed, falling back to heuristic: %s", e)
     msg_l = message.lower()
     intent = "query"
     routed = "direct_response"

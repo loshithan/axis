@@ -1,24 +1,198 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, Calendar } from 'lucide-react';
-import { ChatMessage, Shift } from '@/types/shift';
-import { parseShiftsFromMessage, generateAgentResponse } from '@/lib/shift-parser';
+import { useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
-
-interface ChatPanelProps {
-  onShiftsCreated: (shifts: Shift[]) => void;
-}
+import { ChatMessage } from '@/types/shift';
+import { useAxis } from '@/context/AxisContext';
+import { orchestratorProcess, generateSchedule } from '@/lib/api';
 
 const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
-  content: `👋 **Welcome to ShiftAI!**\n\nI'm your scheduling assistant. Tell me about the shifts you need and I'll add them to your calendar.\n\n**Try saying:**\n- "Schedule a nurse shift tomorrow 7am to 3pm"\n- "Add 3 doctor shifts on Monday 9am-5pm"\n- "Create an evening tech shift for Friday assigned to Sarah"\n- "I need 2 admin shifts on 4/15 from 8am to 4pm"`,
+  content: `👋 **Welcome to AXIS ShiftAI!**\n\nI'm your AI scheduling assistant connected to the AXIS backend.\n\n**Try saying:**\n- "Schedule ICU shifts for next week"\n- "Generate shifts for this month"\n- "Assign emergency department shifts for tomorrow"\n- "Create shifts for April 10 to April 15"`,
 };
 
-export function ChatPanel({ onShiftsCreated }: ChatPanelProps) {
+const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june',
+  'july', 'august', 'september', 'october', 'november', 'december'];
+
+function parseDateFromText(text: string): string {
+  const today = new Date();
+  const lower = text.toLowerCase();
+
+  if (lower.includes('tomorrow')) {
+    const d = new Date(today);
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().slice(0, 10);
+  }
+
+  const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  for (let i = 0; i < days.length; i++) {
+    if (lower.includes(days[i])) {
+      const d = new Date(today);
+      const diff = (i - today.getDay() + 7) % 7 || 7;
+      d.setDate(d.getDate() + diff);
+      return d.toISOString().slice(0, 10);
+    }
+  }
+
+  const isoMatch = text.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (isoMatch) return isoMatch[0];
+
+  const slashDate = text.match(/(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/);
+  if (slashDate) {
+    const y = slashDate[3]
+      ? slashDate[3].length === 2 ? 2000 + parseInt(slashDate[3]) : parseInt(slashDate[3])
+      : today.getFullYear();
+    const m = String(parseInt(slashDate[1])).padStart(2, '0');
+    const day = String(parseInt(slashDate[2])).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  for (let i = 0; i < MONTHS.length; i++) {
+    // "may 10" — digit must NOT be followed by am/pm (avoids "may 3am")
+    const afterMonth = lower.match(new RegExp(`${MONTHS[i]}\\s+(\\d{1,2})(?!\\s*[ap]m)`));
+    if (afterMonth) {
+      const mo = String(i + 1).padStart(2, '0');
+      const dy = String(parseInt(afterMonth[1])).padStart(2, '0');
+      return `${today.getFullYear()}-${mo}-${dy}`;
+    }
+    // "10 may" — digit before month name
+    const beforeMonth = lower.match(new RegExp(`(\\d{1,2})\\s+${MONTHS[i]}`));
+    if (beforeMonth) {
+      const mo = String(i + 1).padStart(2, '0');
+      const dy = String(parseInt(beforeMonth[1])).padStart(2, '0');
+      return `${today.getFullYear()}-${mo}-${dy}`;
+    }
+  }
+
+  return today.toISOString().slice(0, 10);
+}
+
+function parseDateRangeFromText(text: string): { start: string; end: string } {
+  const lower = text.toLowerCase();
+  const today = new Date();
+
+  // "next week"
+  if (lower.includes('next week')) {
+    const monday = new Date(today);
+    monday.setDate(today.getDate() + (7 - today.getDay() + 1) % 7 + 1);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    return { start: monday.toISOString().slice(0, 10), end: sunday.toISOString().slice(0, 10) };
+  }
+
+  // "this week"
+  if (lower.includes('this week')) {
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - today.getDay() + 1);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    return { start: monday.toISOString().slice(0, 10), end: sunday.toISOString().slice(0, 10) };
+  }
+
+  // "this month"
+  if (lower.includes('this month')) {
+    const start = new Date(today.getFullYear(), today.getMonth(), 1);
+    const end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+  }
+
+  // "10-15 may" or "10 - 15 may" or "may 10-15" (day range within same month)
+  for (let i = 0; i < MONTHS.length; i++) {
+    const dashAfter = lower.match(new RegExp(`(\\d{1,2})\\s*[-–]\\s*(\\d{1,2})\\s+${MONTHS[i]}`));
+    if (dashAfter) {
+      const mo = String(i + 1).padStart(2, '0');
+      const yr = today.getFullYear();
+      return {
+        start: `${yr}-${mo}-${String(parseInt(dashAfter[1])).padStart(2, '0')}`,
+        end:   `${yr}-${mo}-${String(parseInt(dashAfter[2])).padStart(2, '0')}`,
+      };
+    }
+    const dashBefore = lower.match(new RegExp(`${MONTHS[i]}\\s+(\\d{1,2})\\s*[-–]\\s*(\\d{1,2})`));
+    if (dashBefore) {
+      const mo = String(i + 1).padStart(2, '0');
+      const yr = today.getFullYear();
+      return {
+        start: `${yr}-${mo}-${String(parseInt(dashBefore[1])).padStart(2, '0')}`,
+        end:   `${yr}-${mo}-${String(parseInt(dashBefore[2])).padStart(2, '0')}`,
+      };
+    }
+  }
+
+  // "from X to Y" or "April 10 to April 15"
+  const toMatch = text.match(/(?:from\s+)?(.+?)\s+(?:to|until|through)\s+(.+?)(?:\s|$)/i);
+  if (toMatch) {
+    const s = parseDateFromText(toMatch[1]);
+    const e = parseDateFromText(toMatch[2]);
+    if (s !== e) return { start: s, end: e };
+  }
+
+  const start = parseDateFromText(text);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  return { start, end: end.toISOString().slice(0, 10) };
+}
+
+function extractHeadcount(text: string): number {
+  const m = text.match(/(\d+)\s*(?:staff|workers?|people|persons?|nurses?|doctors?|shifts?)/i);
+  if (m) return Math.min(parseInt(m[1]), 10);
+  return 1;
+}
+
+function parseTimeRange(text: string): { start_time?: string; end_time?: string } {
+  // matches "3am", "3:30am", "15:00", "3 am", etc.
+  const timeRe = /(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/gi;
+  const times: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = timeRe.exec(text)) !== null && times.length < 2) {
+    let h = parseInt(m[1]);
+    const min = m[2] ? parseInt(m[2]) : 0;
+    const meridiem = m[3]?.toLowerCase();
+    if (meridiem === 'pm' && h < 12) h += 12;
+    if (meridiem === 'am' && h === 12) h = 0;
+    times.push(`${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:00`);
+  }
+  if (times.length === 2) return { start_time: times[0], end_time: times[1] };
+  return {};
+}
+
+function buildAssistantResponse(
+  intent: string,
+  routed_to: string,
+  scheduleResult?: { filled: number; escalated: number; total_slots: number; reasoning_summary: string },
+): string {
+  if (intent === 'schedule' && scheduleResult) {
+    const { filled, escalated, total_slots, reasoning_summary } = scheduleResult;
+    return (
+      `✅ **Schedule generated!**\n\n` +
+      `- **Slots processed:** ${total_slots}\n` +
+      `- **Filled:** ${filled}\n` +
+      `- **Escalated to manager:** ${escalated}\n\n` +
+      `${reasoning_summary}\n\n` +
+      (escalated > 0 ? `⚠️ ${escalated} slot(s) could not be filled automatically and were escalated.` : `All slots filled successfully.`)
+    );
+  }
+
+  if (intent === 'swap') {
+    return `🔄 **Swap request received.**\n\nThe swap agent has been notified (routed to: ${routed_to}). Please use the swap management panel to review candidates.`;
+  }
+
+  return (
+    `ℹ️ **Intent detected:** \`${intent}\`\n\n` +
+    `Routed to: \`${routed_to}\`\n\n` +
+    `I can help you schedule shifts, find swap candidates, and manage your workforce. Try:\n` +
+    `- "Generate ICU shifts for next week"\n` +
+    `- "Schedule emergency shifts for April 10 to April 15"`
+  );
+}
+
+export function ChatPanel() {
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MESSAGE]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
+  const { sbuCode, departmentCode, sessionId } = useAxis();
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -33,25 +207,61 @@ export function ChatPanel({ onShiftsCreated }: ChatPanelProps) {
     setInput('');
     setIsTyping(true);
 
-    // Simulate agent "thinking"
-    await new Promise(r => setTimeout(r, 800 + Math.random() * 700));
+    let responseText = '';
 
-    const shifts = parseShiftsFromMessage(trimmed);
-    const responseText = generateAgentResponse(trimmed, shifts);
+    try {
+      if (!sbuCode || !departmentCode) {
+        responseText = '⚠️ Please select an SBU and department from the top bar before scheduling.';
+      } else {
+        // Step 1: Route via orchestrator
+        const routing = await orchestratorProcess(trimmed, sbuCode, sessionId);
 
-    const assistantMsg: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: 'assistant',
-      content: responseText,
-      shifts,
-    };
+        if (routing.intent === 'schedule') {
+          // Step 2: Build schedule params — prefer LLM extracted_params, fall back to regex
+          const ep = routing.extracted_params as Record<string, unknown>;
+          const { start: regexStart, end: regexEnd } = parseDateRangeFromText(trimmed);
+          const regexTime = parseTimeRange(trimmed);
 
-    setMessages(prev => [...prev, assistantMsg]);
-    setIsTyping(false);
+          const dateStart = (ep.date_range_start as string) || regexStart;
+          const dateEnd   = (ep.date_range_end   as string) || regexEnd;
+          const headcount = (ep.headcount as number) || extractHeadcount(trimmed);
+          const startTime = (ep.start_time as string | null) || regexTime.start_time;
+          const endTime   = (ep.end_time   as string | null) || regexTime.end_time;
 
-    if (shifts.length > 0) {
-      onShiftsCreated(shifts);
+          const constraints: Record<string, unknown> = {
+            ...(ep.constraints as Record<string, unknown> | undefined),
+            ...(startTime ? { start_time: startTime } : {}),
+            ...(endTime   ? { end_time:   endTime   } : {}),
+          };
+
+          const result = await generateSchedule({
+            sbu_code: sbuCode,
+            department_code: (ep.department_code as string) || departmentCode,
+            date_range_start: dateStart,
+            date_range_end: dateEnd,
+            headcount_per_shift: headcount,
+            session_id: sessionId,
+            ...(Object.keys(constraints).length ? { constraints } : {}),
+          });
+
+          responseText = buildAssistantResponse('schedule', routing.routed_to, result);
+
+          // Refresh the calendar
+          queryClient.invalidateQueries({ queryKey: ['shifts'] });
+        } else {
+          responseText = buildAssistantResponse(routing.intent, routing.routed_to);
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      responseText = `❌ **Error:** ${msg}\n\nMake sure the AXIS backend is running at \`${import.meta.env.VITE_API_URL ?? 'http://localhost:8001'}\`.`;
     }
+
+    setMessages(prev => [
+      ...prev,
+      { id: crypto.randomUUID(), role: 'assistant', content: responseText },
+    ]);
+    setIsTyping(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -69,8 +279,8 @@ export function ChatPanel({ onShiftsCreated }: ChatPanelProps) {
           <Calendar className="w-5 h-5 text-primary" />
         </div>
         <div>
-          <h2 className="font-display font-semibold text-foreground text-sm">ShiftAI Assistant</h2>
-          <p className="text-xs text-muted-foreground">Describe your shifts naturally</p>
+          <h2 className="font-display font-semibold text-foreground text-sm">AXIS ShiftAI</h2>
+          <p className="text-xs text-muted-foreground">Connected to AXIS backend</p>
         </div>
       </div>
 
@@ -97,6 +307,7 @@ export function ChatPanel({ onShiftsCreated }: ChatPanelProps) {
                   strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
                   ul: ({ children }) => <ul className="mt-1 space-y-0.5 list-disc list-inside">{children}</ul>,
                   p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
+                  code: ({ children }) => <code className="bg-black/10 rounded px-1 text-xs">{children}</code>,
                 }}
               >
                 {msg.content}
@@ -131,7 +342,7 @@ export function ChatPanel({ onShiftsCreated }: ChatPanelProps) {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Describe the shift you need..."
+            placeholder="e.g. Schedule ICU shifts for next week…"
             className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
           />
           <button

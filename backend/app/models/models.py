@@ -134,7 +134,7 @@ class Shift(Base):
     date = Column(Date, nullable=False)
     start_time = Column(Time, nullable=False)
     end_time = Column(Time, nullable=False)
-    status = Column(Enum(ShiftStatus), default=ShiftStatus.PROPOSED)
+    status = Column(Enum(ShiftStatus, name="shift_status", create_type=False, values_callable=lambda x: [e.value for e in x]), default=ShiftStatus.PROPOSED)
     fairness_score = Column(Float)  # Score at time of assignment
     explanation = Column(Text)  # Plain-English decision explanation
     reasoning_trace = Column(JSON)  # Full agent reasoning for audit
@@ -157,7 +157,7 @@ class LeaveRequest(Base):
     shift_id = Column(Integer, ForeignKey("shifts.id"))  # The shift needing coverage
     date = Column(Date, nullable=False)
     reason = Column(Text)
-    status = Column(Enum(LeaveStatus), default=LeaveStatus.PENDING)
+    status = Column(Enum(LeaveStatus, name="leave_status", create_type=False, values_callable=lambda x: [e.value for e in x]), default=LeaveStatus.PENDING)
     replacement_worker_id = Column(Integer, ForeignKey("workers.id"))
     resolution_summary = Column(Text)  # Agent's summary of what happened
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -177,7 +177,7 @@ class Escalation(Base):
     date = Column(Date, nullable=False)
     description = Column(Text, nullable=False)
     agent_reasoning = Column(Text, nullable=False)
-    status = Column(Enum(EscalationStatus), default=EscalationStatus.OPEN)
+    status = Column(Enum(EscalationStatus, name="escalation_status", create_type=False, values_callable=lambda x: [e.value for e in x]), default=EscalationStatus.OPEN)
     resolved_by = Column(String(200))
     created_at = Column(DateTime, default=datetime.utcnow)
     resolved_at = Column(DateTime)

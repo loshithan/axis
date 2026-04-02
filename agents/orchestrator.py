@@ -25,6 +25,8 @@ RESPOND ONLY WITH JSON (no markdown, no backticks):
         "department_code": "...",
         "date_range_start": "YYYY-MM-DD",
         "date_range_end": "YYYY-MM-DD",
+        "start_time": "HH:MM:SS or null",
+        "end_time": "HH:MM:SS or null",
         "shift_type": "...",
         "headcount": 1,
         "constraints": {}
