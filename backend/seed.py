@@ -20,8 +20,6 @@ def seed():
     # ── 1. SBUs ──
     for config_file in ["hospitals.json", "mobility.json"]:
         config_path = os.path.join(os.path.dirname(__file__), "..", "configs", config_file)
-        if not os.path.exists(config_path):
-            config_path = os.path.join(os.path.dirname(__file__), "configs", config_file)
         with open(config_path, "r") as f:
             config = json.load(f)
 

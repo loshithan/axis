@@ -1,27 +1,28 @@
 import { useMemo, useCallback, useState } from 'react';
-import { Calendar, momentLocalizer, Views, Event } from 'react-big-calendar';
+import { Calendar, momentLocalizer, Views, Event, SlotInfo } from 'react-big-calendar';
 import moment from 'moment';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
-import { useQuery } from '@tanstack/react-query';
-import { CalendarDays, Loader2 } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { CalendarDays, Loader2, Plus } from 'lucide-react';
 import { Shift, ShiftRole } from '@/types/shift';
 import { ShiftListItem, fetchShifts } from '@/lib/api';
 import { useAxis } from '@/context/AxisContext';
+import { ShiftModal } from './ShiftModal';
 
 const localizer = momentLocalizer(moment);
 
 const ROLE_COLORS: Record<ShiftRole, string> = {
-  nurse: 'hsl(174, 72%, 46%)',
-  doctor: 'hsl(262, 72%, 55%)',
-  tech: 'hsl(32, 90%, 55%)',
-  admin: 'hsl(340, 72%, 55%)',
+  nurse: 'hsl(285, 55%, 38%)',
+  doctor: 'hsl(210, 72%, 38%)',
+  tech: 'hsl(32, 90%, 35%)',
+  admin: 'hsl(340, 72%, 40%)',
 };
 
 const ROLE_BG: Record<ShiftRole, string> = {
-  nurse: 'hsla(174, 72%, 46%, 0.18)',
-  doctor: 'hsla(262, 72%, 55%, 0.18)',
-  tech: 'hsla(32, 90%, 55%, 0.18)',
-  admin: 'hsla(340, 72%, 55%, 0.18)',
+  nurse: 'hsla(285, 55%, 45%, 0.12)',
+  doctor: 'hsla(210, 72%, 45%, 0.12)',
+  tech: 'hsla(32, 90%, 45%, 0.12)',
+  admin: 'hsla(340, 72%, 45%, 0.12)',
 };
 
 const DEPT_TO_ROLE: Record<string, ShiftRole> = {
@@ -46,20 +47,22 @@ function fmtTime(timeStr: string): string {
   return timeStr.slice(0, 5); // "HH:MM:SS" → "HH:MM"
 }
 
-function itemToShift(item: ShiftListItem): Shift {
+function itemToShift(item: ShiftListItem): Shift & { _raw: ShiftListItem } {
   const start = combineDateTime(item.date, item.start_time);
   const end = combineDateTime(item.date, item.end_time);
   if (end <= start) end.setDate(end.getDate() + 1); // overnight shift
   const timeRange = `${fmtTime(item.start_time)}–${fmtTime(item.end_time)}`;
+  const isOpen = item.status === 'open' || !item.worker_name;
   return {
     id: String(item.id),
-    title: item.worker_name
-      ? `${timeRange} — (${item.shift_type_name} — ${item.worker_name})`
-      : `${timeRange} — (${item.shift_type_name})`,
+    title: isOpen
+      ? `${timeRange} — (${item.shift_type_name} — OPEN)`
+      : `${timeRange} — (${item.shift_type_name} — ${item.worker_name})`,
     start,
     end,
     role: toRole(item.department_code),
     employee: item.worker_name || undefined,
+    _raw: item,
   };
 }
 
@@ -67,6 +70,32 @@ export function ShiftCalendar() {
   const [view, setView] = useState<(typeof Views)[keyof typeof Views]>(Views.MONTH);
   const [date, setDate] = useState(new Date());
   const { sbuCode, departmentCode } = useAxis();
+  const queryClient = useQueryClient();
+
+  // Modal state
+  const [modalMode, setModalMode] = useState<'create' | 'edit' | null>(null);
+  const [modalDate, setModalDate] = useState<string | undefined>();
+  const [modalShift, setModalShift] = useState<ShiftListItem | undefined>();
+
+  function openCreate(slotDate: string) {
+    setModalDate(slotDate);
+    setModalShift(undefined);
+    setModalMode('create');
+  }
+
+  function openEdit(shift: ShiftListItem) {
+    setModalShift(shift);
+    setModalDate(undefined);
+    setModalMode('edit');
+  }
+
+  function closeModal() {
+    setModalMode(null);
+  }
+
+  function onSaved() {
+    queryClient.invalidateQueries({ queryKey: ['shifts'] });
+  }
 
   // Compute query date range from current calendar view
   const { rangeStart, rangeEnd } = useMemo(() => {
@@ -99,12 +128,24 @@ export function ShiftCalendar() {
   const shifts = useMemo(() => items.map(itemToShift), [items]);
 
   const events: Event[] = useMemo(() =>
-    shifts.map(s => ({ title: s.title, start: s.start, end: s.end, resource: s })),
+    shifts.map(s => ({ title: s.title, start: s.start, end: s.end, resource: s as Shift & { _raw: ShiftListItem } })),
     [shifts],
   );
 
   const eventStyleGetter = useCallback((event: Event) => {
     const shift = event.resource as Shift;
+    const isOpen = !shift.employee;
+    if (isOpen) {
+      return {
+        style: {
+          backgroundColor: 'hsla(0, 0%, 50%, 0.12)',
+          color: 'hsl(0, 0%, 60%)',
+          borderLeft: '3px dashed hsl(0, 0%, 45%)',
+          fontWeight: 500,
+          opacity: 0.85,
+        },
+      };
+    }
     return {
       style: {
         backgroundColor: ROLE_BG[shift.role],
@@ -113,6 +154,17 @@ export function ShiftCalendar() {
         fontWeight: 500,
       },
     };
+  }, []);
+
+  const handleSelectSlot = useCallback((slot: SlotInfo) => {
+    if (!sbuCode || !departmentCode) return;
+    const d = slot.start instanceof Date ? slot.start.toISOString().slice(0, 10) : String(slot.start).slice(0, 10);
+    openCreate(d);
+  }, [sbuCode, departmentCode]);
+
+  const handleSelectEvent = useCallback((event: Event) => {
+    const shift = (event.resource as Shift & { _raw: ShiftListItem })._raw;
+    if (shift) openEdit(shift);
   }, []);
 
   return (
@@ -124,13 +176,24 @@ export function ShiftCalendar() {
           <h2 className="font-display font-semibold text-foreground">Schedule</h2>
           {isFetching && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
         </div>
-        <div className="flex items-center gap-4 text-xs text-muted-foreground">
-          {Object.entries(ROLE_COLORS).map(([role, color]) => (
-            <div key={role} className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
-              <span className="capitalize">{role}</span>
-            </div>
-          ))}
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 text-xs text-muted-foreground">
+            {Object.entries(ROLE_COLORS).map(([role, color]) => (
+              <div key={role} className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
+                <span className="capitalize">{role}</span>
+              </div>
+            ))}
+          </div>
+          {sbuCode && departmentCode && (
+            <button
+              onClick={() => openCreate(new Date().toISOString().slice(0, 10))}
+              className="flex items-center gap-1.5 text-xs bg-primary text-primary-foreground px-3 py-1.5 rounded-lg hover:opacity-90 transition-opacity"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add Shift
+            </button>
+          )}
         </div>
       </div>
 
@@ -150,11 +213,25 @@ export function ShiftCalendar() {
             onNavigate={(d) => setDate(d)}
             eventPropGetter={eventStyleGetter}
             views={[Views.MONTH, Views.WEEK, Views.DAY]}
+            selectable
+            onSelectSlot={handleSelectSlot}
+            onSelectEvent={handleSelectEvent}
             popup
             style={{ height: '100%' }}
           />
         )}
       </div>
+
+      {/* Shift Modal */}
+      {modalMode && (
+        <ShiftModal
+          mode={modalMode}
+          initialDate={modalDate}
+          shift={modalShift}
+          onClose={closeModal}
+          onSaved={onSaved}
+        />
+      )}
     </div>
   );
 }

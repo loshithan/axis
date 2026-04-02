@@ -7,7 +7,7 @@ import json
 
 from agents.deepseek import chat_completion, has_deepseek_key
 
-ORCHESTRATOR_SYSTEM_PROMPT = """You are the AXIS Orchestrator Agent. Your role is to understand manager messages 
+ORCHESTRATOR_SYSTEM_PROMPT = """You are the AXIS Orchestrator Agent. Your role is to understand manager messages
 and route them to the correct specialist agent.
 
 You do NOT schedule, swap, or validate. You ONLY route.
@@ -29,7 +29,9 @@ RESPOND ONLY WITH JSON (no markdown, no backticks):
         "end_time": "HH:MM:SS or null",
         "shift_type": "...",
         "headcount": 1,
-        "constraints": {}
+        "constraints": {},
+        "worker_name": "full name of the worker (for swap intent only, or null)",
+        "leave_date": "YYYY-MM-DD (for swap intent only, the specific date of leave, or null)"
     },
     "confidence": 0.95,
     "reasoning": "Brief explanation of why this intent was chosen"
@@ -37,7 +39,7 @@ RESPOND ONLY WITH JSON (no markdown, no backticks):
 
 Intent classification rules:
 - "schedule": Any request to create, assign, or generate shifts/rosters
-- "swap": Any request about leave, replacement, coverage, or shift exchange
+- "swap": Any request about leave, replacement, coverage, or shift exchange. Extract worker_name and leave_date.
 - "query": Questions about staff, availability, schedule status
 - "report": Requests for compliance reports, fairness summaries, dashboards
 """
@@ -48,9 +50,12 @@ def classify_intent(message: str, sbu_code: str, session_id: str) -> dict:
     Parse a manager's natural language message and classify the intent.
     Returns structured routing information for the specialist agent.
     """
+    from datetime import date
+    today = date.today().isoformat()
     result_text = chat_completion(
         system=ORCHESTRATOR_SYSTEM_PROMPT,
         user=(
+            f"Today's date: {today}\n"
             f"SBU Context: {sbu_code}\nSession: {session_id}\n\nManager message: {message}"
         ),
         max_tokens=500,

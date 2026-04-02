@@ -536,23 +536,50 @@ async def notify_worker_impl(
 
     email_sent = False
     push_sent = False
-    api_key = os.getenv("SENDGRID_API_KEY")
-    if api_key and worker.email:
-        try:
-            from sendgrid import SendGridAPIClient
-            from sendgrid.helpers.mail import Mail
 
-            m = Mail(
-                from_email=os.getenv("SENDGRID_FROM", "noreply@axis.local"),
-                to_emails=worker.email,
-                subject=subject,
-                plain_text_content=message,
-            )
-            sg = SendGridAPIClient(api_key)
-            sg.send(m)
-            email_sent = True
-        except Exception as e:
-            logger.warning("SendGrid failed: %s", e)
+    if worker.email:
+        sendgrid_key = os.getenv("SENDGRID_API_KEY")
+        smtp_host = os.getenv("SMTP_HOST")
+
+        if sendgrid_key:
+            try:
+                from sendgrid import SendGridAPIClient
+                from sendgrid.helpers.mail import Mail
+                m = Mail(
+                    from_email=os.getenv("SENDGRID_FROM", "noreply@axis.local"),
+                    to_emails=worker.email,
+                    subject=subject,
+                    plain_text_content=message,
+                )
+                SendGridAPIClient(sendgrid_key).send(m)
+                email_sent = True
+            except Exception as e:
+                logger.warning("SendGrid failed: %s", e)
+
+        elif smtp_host:
+            try:
+                import smtplib
+                from email.mime.text import MIMEText
+                smtp_port = int(os.getenv("SMTP_PORT", "587"))
+                smtp_user = os.getenv("SMTP_USER", "")
+                smtp_password = os.getenv("SMTP_PASSWORD", "")
+                smtp_from = os.getenv("SMTP_FROM", smtp_user)
+
+                msg = MIMEText(message)
+                msg["Subject"] = subject
+                msg["From"] = smtp_from
+                msg["To"] = worker.email
+
+                with smtplib.SMTP(smtp_host, smtp_port) as server:
+                    server.ehlo()
+                    server.starttls()
+                    if smtp_user and smtp_password:
+                        server.login(smtp_user, smtp_password)
+                    server.sendmail(smtp_from, [worker.email], msg.as_string())
+                email_sent = True
+                logger.info("SMTP email sent to %s", worker.email)
+            except Exception as e:
+                logger.warning("SMTP failed: %s", e)
 
     logger.info(
         "Notify worker id=%s type=%s email_sent=%s shift_id=%s",
@@ -743,9 +770,45 @@ async def generate_schedule_impl(
                     explanation = f"Assigned {cand.name}; shift #{cresp.shift_id}"
                     filled += 1
                     placed = True
+
+                    # Notify worker about the shift assignment
+                    try:
+                        await notify_worker_impl(
+                            session,
+                            cand.id,
+                            "assignment",
+                            f"Shift Assignment: {st.name} on {d.isoformat()}",
+                            (
+                                f"Dear {cand.name},\n\n"
+                                f"You have been assigned to the following shift:\n\n"
+                                f"  Shift:      {st.name}\n"
+                                f"  Date:       {d.isoformat()}\n"
+                                f"  Time:       {st.start_time} – {st.end_time}\n"
+                                f"  Shift ID:   #{cresp.shift_id}\n\n"
+                                f"Please confirm your attendance.\n\n"
+                                f"— AXIS Workforce AI"
+                            ),
+                            cresp.shift_id,
+                        )
+                    except Exception as e:
+                        logger.warning("Shift assignment notify failed for worker %s: %s", cand.id, e)
+
                     break
 
                 if not placed:
+                    # Create an open (unassigned) shift so it appears on the calendar
+                    open_shift = Shift(
+                        worker_id=None,
+                        shift_type_id=st.id,
+                        date=d,
+                        start_time=st.start_time,
+                        end_time=st.end_time,
+                        status=ShiftStatus.OPEN,
+                        explanation="No valid candidate found — open for manual assignment.",
+                    )
+                    session.add(open_shift)
+                    await session.flush()
+
                     await escalate_impl(
                         session,
                         EscalateToManagerRequest(
@@ -759,7 +822,7 @@ async def generate_schedule_impl(
                         ),
                     )
                     status_slot = "escalated"
-                    explanation = "Escalated to manager — no valid candidate."
+                    explanation = "Open shift created — escalated to manager."
                     escalated += 1
 
                 slots_out.append(
@@ -887,15 +950,20 @@ async def resolve_leave_request_impl(
             "notify_email_sent": email_sent,
         }
 
+    # No replacement found — convert the shift to Open and escalate
+    sh.worker_id = None
+    sh.status = ShiftStatus.OPEN
+    sh.explanation = "Worker on leave; no swap found — converted to open shift."
+
     esc = await escalate_impl(
         session,
         EscalateToManagerRequest(
             shift_type_id=sh.shift_type_id,
             date=sh.date,
             conflict_description=f"No swap for leave request #{leave_request_id}",
-            agent_reasoning="No swap candidate passed validation.",
+            agent_reasoning="No swap candidate passed validation. Shift converted to open.",
             attempted_candidates=attempted,
         ),
     )
-    lr.resolution_summary = "Escalated — no automatic coverage."
+    lr.resolution_summary = "No replacement found — shift converted to open, escalated to manager."
     return {"status": "escalated", "escalation_id": esc.escalation_id}

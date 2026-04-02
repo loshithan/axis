@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import { ChatMessage } from '@/types/shift';
 import { useAxis } from '@/context/AxisContext';
-import { orchestratorProcess, generateSchedule } from '@/lib/api';
+import { orchestratorProcess, generateSchedule, searchWorker, fetchShifts, createLeaveRequest } from '@/lib/api';
 
 const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
@@ -174,7 +174,16 @@ function buildAssistantResponse(
   }
 
   if (intent === 'swap') {
-    return `🔄 **Swap request received.**\n\nThe swap agent has been notified (routed to: ${routed_to}). Please use the swap management panel to review candidates.`;
+    const extra = (scheduleResult as unknown as { leaveId?: number; workerName?: string; leaveDate?: string } | undefined);
+    if (extra?.leaveId) {
+      return (
+        `🔄 **Leave request created** (ID #${extra.leaveId})\n\n` +
+        `- **Worker:** ${extra.workerName}\n` +
+        `- **Date:** ${extra.leaveDate}\n\n` +
+        `Open the **Swap Management** tab to review swap candidates and resolve.`
+      );
+    }
+    return `🔄 **Swap request received.**\n\nThe swap agent has been notified. Please use the swap management panel to review candidates.`;
   }
 
   return (
@@ -236,7 +245,7 @@ export function ChatPanel() {
 
           const result = await generateSchedule({
             sbu_code: sbuCode,
-            department_code: (ep.department_code as string) || departmentCode,
+            department_code: departmentCode,
             date_range_start: dateStart,
             date_range_end: dateEnd,
             headcount_per_shift: headcount,
@@ -248,6 +257,39 @@ export function ChatPanel() {
 
           // Refresh the calendar
           queryClient.invalidateQueries({ queryKey: ['shifts'] });
+
+        } else if (routing.intent === 'swap') {
+          const ep = routing.extracted_params as Record<string, unknown>;
+          const workerName = ep.worker_name as string | null;
+          const leaveDate = (ep.leave_date as string | null) || parseDateFromText(trimmed);
+
+          if (workerName && leaveDate) {
+            // Search for the worker
+            const workers = await searchWorker(workerName, sbuCode);
+            if (workers.length === 0) {
+              responseText = `⚠️ Could not find a worker named **"${workerName}"** in this SBU. Please check the name and try again.`;
+            } else {
+              const worker = workers[0];
+              // Look for a shift on that date for this worker
+              const shifts = await fetchShifts(sbuCode, departmentCode, leaveDate, leaveDate);
+              const workerShift = shifts.find(s => s.worker_name === worker.name);
+              const lr = await createLeaveRequest({
+                worker_id: worker.id,
+                shift_id: workerShift?.id,
+                date: leaveDate,
+                reason: trimmed,
+              });
+              responseText = buildAssistantResponse('swap', routing.routed_to, {
+                leaveId: lr.id,
+                workerName: worker.name,
+                leaveDate,
+              } as never);
+              queryClient.invalidateQueries({ queryKey: ['leave-requests'] });
+            }
+          } else {
+            responseText = `⚠️ I detected a swap/leave request but could not identify the worker name or date. Please be more specific, e.g. "Amara Perera is on leave on 5th May".`;
+          }
+
         } else {
           responseText = buildAssistantResponse(routing.intent, routing.routed_to);
         }

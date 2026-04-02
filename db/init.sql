@@ -6,7 +6,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ── Enums ──
-CREATE TYPE shift_status AS ENUM ('proposed', 'confirmed', 'cancelled', 'swapped');
+CREATE TYPE shift_status AS ENUM ('proposed', 'confirmed', 'cancelled', 'swapped', 'open');
 CREATE TYPE leave_status AS ENUM ('pending', 'approved', 'rejected', 'covered');
 CREATE TYPE escalation_status AS ENUM ('open', 'resolved', 'dismissed');
 
@@ -68,7 +68,7 @@ CREATE TABLE availability (
 
 CREATE TABLE shifts (
     id SERIAL PRIMARY KEY,
-    worker_id INTEGER NOT NULL REFERENCES workers(id),
+    worker_id INTEGER REFERENCES workers(id),
     shift_type_id INTEGER NOT NULL REFERENCES shift_types(id),
     date DATE NOT NULL,
     start_time TIME NOT NULL,

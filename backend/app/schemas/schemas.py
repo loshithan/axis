@@ -200,7 +200,9 @@ class NotifyManagerResponse(BaseModel):
 
 class ShiftListItem(BaseModel):
     id: int
+    worker_id: Optional[int] = None
     worker_name: str
+    shift_type_id: int
     shift_type_name: str
     department_code: str
     date: date
@@ -222,3 +224,23 @@ class ShiftTypeItem(BaseModel):
     department_code: str
     start_time: time
     end_time: time
+
+
+class ManualCreateShiftRequest(BaseModel):
+    """Manual shift creation — worker_id=None creates an open shift."""
+    worker_id: Optional[int] = None
+    shift_type_id: int
+    date: date
+    start_time: time
+    end_time: time
+    status: str = "confirmed"
+
+
+class UpdateShiftRequest(BaseModel):
+    """Partial update — only fields present in the body are applied."""
+    worker_id: Optional[int] = None          # explicit null → open shift
+    shift_type_id: Optional[int] = None
+    date: Optional[date] = None
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
+    status: Optional[str] = None

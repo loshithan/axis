@@ -4,58 +4,54 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Definition of the design system. All colors, gradients, fonts, etc should be defined here.
-All colors MUST be HSL.
-*/
-
 @layer base {
   :root {
-    --background: 222 47% 6%;
-    --foreground: 210 40% 92%;
+    --background: 0 0% 96%;
+    --foreground: 260 20% 12%;
 
-    --card: 222 40% 10%;
-    --card-foreground: 210 40% 92%;
+    --card: 0 0% 100%;
+    --card-foreground: 260 20% 12%;
 
-    --popover: 222 40% 10%;
-    --popover-foreground: 210 40% 92%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 260 20% 12%;
 
-    --primary: 174 72% 46%;
-    --primary-foreground: 222 47% 6%;
+    --primary: 285 55% 45%;
+    --primary-foreground: 0 0% 98%;
 
-    --secondary: 222 30% 16%;
-    --secondary-foreground: 210 40% 85%;
+    --secondary: 0 0% 91%;
+    --secondary-foreground: 260 20% 20%;
 
-    --muted: 222 30% 14%;
-    --muted-foreground: 215 20% 55%;
+    --muted: 0 0% 91%;
+    --muted-foreground: 260 8% 48%;
 
-    --accent: 174 72% 46%;
-    --accent-foreground: 222 47% 6%;
+    --accent: 285 55% 45%;
+    --accent-foreground: 0 0% 98%;
 
-    --destructive: 0 72% 55%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 98%;
 
-    --border: 222 25% 18%;
-    --input: 222 25% 18%;
-    --ring: 174 72% 46%;
+    --border: 0 0% 86%;
+    --input: 0 0% 86%;
+    --ring: 285 55% 45%;
 
     --radius: 0.75rem;
 
-    --chat-bg: 222 40% 8%;
-    --chat-user: 174 72% 46%;
-    --chat-agent: 222 30% 16%;
-    --shift-nurse: 174 72% 46%;
-    --shift-doctor: 262 72% 55%;
-    --shift-tech: 32 90% 55%;
-    --shift-admin: 340 72% 55%;
+    --chat-bg: 0 0% 98%;
+    --chat-user: 285 55% 45%;
+    --chat-agent: 0 0% 91%;
+    --shift-nurse: 285 55% 45%;
+    --shift-doctor: 210 72% 50%;
+    --shift-tech: 32 90% 50%;
+    --shift-admin: 340 72% 50%;
 
-    --sidebar-background: 222 40% 8%;
-    --sidebar-foreground: 210 40% 92%;
-    --sidebar-primary: 174 72% 46%;
-    --sidebar-primary-foreground: 222 47% 6%;
-    --sidebar-accent: 222 30% 16%;
-    --sidebar-accent-foreground: 210 40% 92%;
-    --sidebar-border: 222 25% 18%;
-    --sidebar-ring: 174 72% 46%;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 260 20% 12%;
+    --sidebar-primary: 285 55% 45%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 0 0% 91%;
+    --sidebar-accent-foreground: 260 20% 12%;
+    --sidebar-border: 0 0% 86%;
+    --sidebar-ring: 285 55% 45%;
   }
 }
 
@@ -74,7 +70,7 @@ All colors MUST be HSL.
   }
 }
 
-/* React Big Calendar custom theme */
+/* ── React Big Calendar ── */
 .rbc-calendar {
   font-family: 'Inter', sans-serif;
   background: transparent;
@@ -86,9 +82,9 @@ All colors MUST be HSL.
 }
 
 .rbc-toolbar button {
-  color: hsl(210 40% 85%);
-  border: 1px solid hsl(222 25% 18%);
-  background: hsl(222 30% 16%);
+  color: hsl(260 20% 25%);
+  border: 1px solid hsl(0 0% 86%);
+  background: hsl(0 0% 100%);
   border-radius: 0.5rem;
   padding: 0.4rem 1rem;
   font-size: 0.85rem;
@@ -96,69 +92,69 @@ All colors MUST be HSL.
 }
 
 .rbc-toolbar button:hover {
-  background: hsl(174 72% 46% / 0.15);
-  border-color: hsl(174 72% 46% / 0.4);
+  background: hsl(285 55% 45% / 0.1);
+  border-color: hsl(285 55% 45% / 0.4);
 }
 
 .rbc-toolbar button.rbc-active {
-  background: hsl(174 72% 46% / 0.2);
-  border-color: hsl(174 72% 46%);
-  color: hsl(174 72% 56%);
+  background: hsl(285 55% 45% / 0.15);
+  border-color: hsl(285 55% 45%);
+  color: hsl(285 55% 40%);
 }
 
 .rbc-toolbar .rbc-toolbar-label {
   font-family: 'Space Grotesk', sans-serif;
   font-weight: 600;
   font-size: 1.1rem;
-  color: hsl(210 40% 92%);
+  color: hsl(260 20% 12%);
 }
 
 .rbc-header {
-  background: hsl(222 30% 12%);
-  border-bottom: 1px solid hsl(222 25% 18%) !important;
+  background: hsl(0 0% 95%);
+  border-bottom: 1px solid hsl(0 0% 86%) !important;
   padding: 0.6rem 0.5rem;
   font-weight: 500;
   font-size: 0.8rem;
-  color: hsl(215 20% 55%);
+  color: hsl(260 8% 48%);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
 .rbc-month-view,
 .rbc-time-view {
-  border: 1px solid hsl(222 25% 18%);
+  border: 1px solid hsl(0 0% 86%);
   border-radius: 0.75rem;
   overflow: hidden;
 }
 
 .rbc-month-row + .rbc-month-row {
-  border-top: 1px solid hsl(222 25% 18%);
+  border-top: 1px solid hsl(0 0% 86%);
 }
 
 .rbc-day-bg {
-  background: hsl(222 40% 8%);
+  background: hsl(0 0% 100%);
 }
 
 .rbc-day-bg + .rbc-day-bg {
-  border-left: 1px solid hsl(222 25% 18%);
+  border-left: 1px solid hsl(0 0% 86%);
 }
 
 .rbc-off-range-bg {
-  background: hsl(222 40% 6%);
+  background: hsl(0 0% 96%);
 }
 
 .rbc-today {
-  background: hsl(174 72% 46% / 0.06) !important;
+  background: hsl(285 55% 45% / 0.06) !important;
 }
 
 .rbc-date-cell {
   padding: 0.3rem 0.5rem;
   font-size: 0.85rem;
-  color: hsl(215 20% 55%);
+  color: hsl(260 8% 48%);
 }
 
 .rbc-date-cell.rbc-now {
-  color: hsl(174 72% 56%);
+  color: hsl(285 55% 40%);
   font-weight: 600;
 }
 
@@ -171,37 +167,37 @@ All colors MUST be HSL.
 }
 
 .rbc-event.rbc-selected {
-  box-shadow: 0 0 0 2px hsl(174 72% 46%);
+  box-shadow: 0 0 0 2px hsl(285 55% 45%);
 }
 
 .rbc-show-more {
-  color: hsl(174 72% 56%);
+  color: hsl(285 55% 40%);
   font-size: 0.75rem;
   font-weight: 500;
 }
 
 .rbc-time-content {
-  border-top: 1px solid hsl(222 25% 18%);
+  border-top: 1px solid hsl(0 0% 86%);
 }
 
 .rbc-timeslot-group {
-  border-bottom: 1px solid hsl(222 25% 15%);
+  border-bottom: 1px solid hsl(0 0% 90%);
 }
 
 .rbc-time-slot {
-  color: hsl(215 20% 45%);
+  color: hsl(260 8% 52%);
   font-size: 0.75rem;
 }
 
 .rbc-time-header-content {
-  border-left: 1px solid hsl(222 25% 18%);
+  border-left: 1px solid hsl(0 0% 86%);
 }
 
 .rbc-time-content > * + * > * {
-  border-left: 1px solid hsl(222 25% 18%);
+  border-left: 1px solid hsl(0 0% 86%);
 }
 
 .rbc-current-time-indicator {
-  background-color: hsl(174 72% 46%);
+  background-color: hsl(285 55% 45%);
   height: 2px;
 }

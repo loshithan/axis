@@ -16,6 +16,7 @@ Base = declarative_base()
 # ── Enums ──
 
 class ShiftStatus(str, PyEnum):
+    OPEN = "open"
     PROPOSED = "proposed"
     CONFIRMED = "confirmed"
     CANCELLED = "cancelled"
@@ -129,12 +130,12 @@ class Shift(Base):
     __tablename__ = "shifts"
 
     id = Column(Integer, primary_key=True)
-    worker_id = Column(Integer, ForeignKey("workers.id"), nullable=False)
+    worker_id = Column(Integer, ForeignKey("workers.id"), nullable=True)
     shift_type_id = Column(Integer, ForeignKey("shift_types.id"), nullable=False)
     date = Column(Date, nullable=False)
     start_time = Column(Time, nullable=False)
     end_time = Column(Time, nullable=False)
-    status = Column(Enum(ShiftStatus, name="shift_status", create_type=False, values_callable=lambda x: [e.value for e in x]), default=ShiftStatus.PROPOSED)
+    status = Column(Enum(ShiftStatus, name="shift_status", create_type=False, values_callable=lambda x: [e.value for e in x]), default=ShiftStatus.OPEN)
     fairness_score = Column(Float)  # Score at time of assignment
     explanation = Column(Text)  # Plain-English decision explanation
     reasoning_trace = Column(JSON)  # Full agent reasoning for audit
