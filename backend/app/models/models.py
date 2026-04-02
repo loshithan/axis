@@ -105,7 +105,7 @@ class Worker(Base):
     department = relationship("Department", back_populates="workers")
     shifts = relationship("Shift", back_populates="worker")
     availability = relationship("Availability", back_populates="worker")
-    leave_requests = relationship("LeaveRequest", back_populates="worker")
+    leave_requests = relationship("LeaveRequest", back_populates="worker", foreign_keys="LeaveRequest.worker_id")
 
 
 class Availability(Base):

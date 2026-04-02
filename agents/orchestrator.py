@@ -4,8 +4,28 @@ Every message from a manager hits this agent first.
 It parses intent, extracts parameters, loads SBU config, and routes.
 """
 import json
+import logging
+from enum import Enum
+from datetime import date, timedelta
+from functools import lru_cache
+from pydantic import BaseModel, Field
 
 from agents.deepseek import chat_completion, has_deepseek_key
+
+logger = logging.getLogger(__name__)
+
+class IntentType(str, Enum):
+    SCHEDULE = "schedule"
+    SWAP = "swap"
+    QUERY = "query"
+    REPORT = "report"
+
+class OrchestratorResult(BaseModel):
+    intent: IntentType
+    routed_to: str
+    extracted_params: dict = Field(default_factory=dict)
+    confidence: float = 0.0
+    reasoning: str = ""
 
 ORCHESTRATOR_SYSTEM_PROMPT = """You are the AXIS Orchestrator Agent. Your role is to understand manager messages 
 and route them to the correct specialist agent.
@@ -46,23 +66,30 @@ def classify_intent(message: str, sbu_code: str, session_id: str) -> dict:
     Parse a manager's natural language message and classify the intent.
     Returns structured routing information for the specialist agent.
     """
+    today = date.today()
+    days_ahead = 7 - today.weekday()
+    next_monday = today + timedelta(days=days_ahead)
+    next_sunday = next_monday + timedelta(days=6)
+
     result_text = chat_completion(
         system=ORCHESTRATOR_SYSTEM_PROMPT,
         user=(
+            f"Today: {today}. Next Monday: {next_monday}. Next Sunday: {next_sunday}.\n"
+            f"Resolve ALL relative dates to YYYY-MM-DD before returning.\n"
             f"SBU Context: {sbu_code}\nSession: {session_id}\n\nManager message: {message}"
         ),
         max_tokens=500,
     )
     try:
-        result = json.loads(result_text)
+        data = json.loads(result_text)
     except json.JSONDecodeError:
         # Fallback: try to extract JSON from the response
         import re
         json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
         if json_match:
-            result = json.loads(json_match.group())
+            data = json.loads(json_match.group())
         else:
-            result = {
+            data = {
                 "intent": "query",
                 "routed_to": "direct_response",
                 "extracted_params": {},
@@ -71,12 +98,18 @@ def classify_intent(message: str, sbu_code: str, session_id: str) -> dict:
             }
 
     # Ensure sbu_code is in the params
-    result.setdefault("extracted_params", {})
-    result["extracted_params"]["sbu_code"] = sbu_code
+    data.setdefault("extracted_params", {})
+    data["extracted_params"]["sbu_code"] = sbu_code
 
-    return result
+    # Pydantic validation
+    result = OrchestratorResult.model_validate(data)
+    
+    logger.info("Orchestrator: intent=%s route=%s confidence=%.2f", result.intent.value, result.routed_to, result.confidence)
+
+    return result.model_dump()
 
 
+@lru_cache(maxsize=10)
 def load_sbu_config(sbu_code: str) -> dict:
     """Load the SBU configuration profile from the database or file."""
     # TODO: Load from DB in production. For MVP, load from JSON file.

@@ -3,6 +3,7 @@ AXIS Agent 3: Swap Agent
 Activates when a worker submits a leave request.
 Operates without human intervention to find a valid replacement.
 """
+import time
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
 from agents.deepseek import has_deepseek_key, langchain_chat_model
@@ -92,8 +93,11 @@ Find a replacement now. Start by calling FindSwapCandidates with shift_id={shift
         "reasoning_steps": []
     }
 
+    candidate_name_map = {}
     max_iterations = 20
     iteration = 0
+
+    start_time = time.monotonic()
 
     while iteration < max_iterations:
         iteration += 1
@@ -109,6 +113,12 @@ Find a replacement now. Start by calling FindSwapCandidates with shift_id={shift
                 if tool_fn:
                     try:
                         tool_result = tool_fn.invoke(tool_args)
+                        
+                        if tool_name == "find_swap_candidates" and type(tool_result) is dict:
+                            for candidate in tool_result.get("candidates", []):
+                                if "id" in candidate and "name" in candidate:
+                                    candidate_name_map[candidate["id"]] = candidate["name"]
+                                    
                     except Exception as e:
                         tool_result = {"error": str(e)}
 
@@ -120,7 +130,9 @@ Find a replacement now. Start by calling FindSwapCandidates with shift_id={shift
 
                     if tool_name == "create_shift":
                         result["status"] = "resolved"
-                        result["replacement_worker_id"] = tool_args.get("worker_id")
+                        wid = tool_args.get("worker_id")
+                        result["replacement_worker_id"] = wid
+                        result["replacement_worker_name"] = candidate_name_map.get(wid, f"Worker #{wid}")
                     elif tool_name == "escalate_to_manager":
                         result["status"] = "escalated"
                         result["escalated"] = True
@@ -135,6 +147,9 @@ Find a replacement now. Start by calling FindSwapCandidates with shift_id={shift
         else:
             result["summary"] = response.content
             break
+
+    result["resolution_seconds"] = round(time.monotonic() - start_time, 1)
+    result["met_sla"] = result["resolution_seconds"] < 120
 
     return result
 

@@ -6,15 +6,27 @@ from typing import Any
 
 
 def deepseek_settings() -> dict[str, str | None]:
+    if os.getenv("DEEPSEEK_API_KEY"):
+        return {
+            "api_key": os.getenv("DEEPSEEK_API_KEY"),
+            "base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+            "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+        }
+    elif os.getenv("GROQ_API_KEY"):
+        return {
+            "api_key": os.getenv("GROQ_API_KEY"),
+            "base_url": "https://api.groq.com/openai/v1",
+            "model": "llama3-70b-8192",
+        }
     return {
-        "api_key": os.getenv("DEEPSEEK_API_KEY"),
-        "base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-        "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+        "api_key": None,
+        "base_url": None,
+        "model": None,
     }
 
 
 def has_deepseek_key() -> bool:
-    return bool(os.getenv("DEEPSEEK_API_KEY"))
+    return bool(os.getenv("DEEPSEEK_API_KEY") or os.getenv("GROQ_API_KEY"))
 
 
 def chat_completion(
@@ -28,7 +40,7 @@ def chat_completion(
 
     s = deepseek_settings()
     if not s["api_key"]:
-        raise ValueError("DEEPSEEK_API_KEY is not set")
+        raise ValueError("API_KEY is not set (neither DEEPSEEK nor GROQ)")
     client = OpenAI(api_key=s["api_key"], base_url=s["base_url"])
     r = client.chat.completions.create(
         model=s["model"],

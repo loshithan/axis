@@ -105,6 +105,16 @@ def _check_rest_violations(shifts: list, config: dict) -> list:
     min_rest = config.get("min_rest_hours", 11)
     violations = []
 
+    # Parse dates/times up front so sorting works reliably
+    from datetime import date, time
+    for shift in shifts:
+        if isinstance(shift.get("date"), str):
+            shift["date"] = date.fromisoformat(shift["date"])
+        if isinstance(shift.get("start_time"), str):
+            shift["start_time"] = time.fromisoformat(shift["start_time"])
+        if isinstance(shift.get("end_time"), str):
+            shift["end_time"] = time.fromisoformat(shift["end_time"])
+
     # Group shifts by worker
     worker_shifts = {}
     for shift in shifts:
@@ -193,6 +203,16 @@ def _calculate_fairness_summary(workers: list) -> dict:
 def _estimate_gap_hours(prev_shift: dict, curr_shift: dict) -> float | None:
     """Estimate hours between two consecutive shifts."""
     try:
+        from datetime import date, time
+        
+        for s in (prev_shift, curr_shift):
+            if isinstance(s.get("date"), str):
+                s["date"] = date.fromisoformat(s["date"])
+            if isinstance(s.get("start_time"), str):
+                s["start_time"] = time.fromisoformat(s["start_time"])
+            if isinstance(s.get("end_time"), str):
+                s["end_time"] = time.fromisoformat(s["end_time"])
+                
         prev_end = datetime.combine(prev_shift["date"], prev_shift["end_time"])
         curr_start = datetime.combine(curr_shift["date"], curr_shift["start_time"])
         gap = (curr_start - prev_end).total_seconds() / 3600

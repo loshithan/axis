@@ -2,7 +2,12 @@
 AXIS FastAPI Backend
 All agent tools exposed as REST API endpoints.
 """
+import os
 from datetime import date
+from dotenv import load_dotenv
+
+# Load environment variables from the project root .env file
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware

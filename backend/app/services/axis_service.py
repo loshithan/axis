@@ -52,22 +52,6 @@ from app.schemas.schemas import (
 
 logger = logging.getLogger("axis.service")
 
-
-def _ensure_repo_on_path() -> None:
-    """Add repo root (contains `agents` + `configs`) to sys.path for Docker and local layouts."""
-    p = Path(__file__).resolve().parent
-    for _ in range(8):
-        if (p / "agents").is_dir() and (p / "configs").is_dir():
-            s = str(p)
-            if s not in sys.path:
-                sys.path.insert(0, s)
-            return
-        p = p.parent
-
-
-_ensure_repo_on_path()
-
-
 def _week_range(d: date) -> tuple[date, date]:
     start = d - timedelta(days=d.weekday())
     end = start + timedelta(days=6)
@@ -674,116 +658,69 @@ async def generate_schedule_impl(
     if not shift_types:
         raise ValueError("No shift types found for this department.")
 
+    import json
+    import asyncio
+    
+    # Load SBU config directly (assumes PYTHONPATH allows this safely or relative path works)
+    config_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "..", "configs", f"{req.sbu_code}.json"
+    )
+    if os.path.exists(config_path):
+        with open(config_path, "r") as f:
+            sbu_config = json.load(f)
+    else:
+        sbu_config = {"name": sbu.code}
+
+    schedule_params = {
+        "department_code": req.department_code,
+        "date_range_start": req.date_range_start.isoformat(),
+        "date_range_end": req.date_range_end.isoformat(),
+        "shift_type": [st.name for st in shift_types],
+        "headcount": req.headcount_per_shift,
+        "constraints": req.constraints,
+    }
+
+    def _run_scheduler_sync():
+        from agents.scheduler import run_scheduler
+        return run_scheduler(schedule_params, sbu_config)
+
+    # Hand off entire process to the ReAct agent
+    agent_result = await asyncio.to_thread(_run_scheduler_sync)
+
     slots_out: list[ScheduleSlotResult] = []
-    filled = 0
-    escalated = 0
-    d = req.date_range_start
-    while d <= req.date_range_end:
-        for st in shift_types:
-            for _ in range(req.headcount_per_shift):
-                assigned_name: Optional[str] = None
-                status_slot = "pending"
-                explanation = ""
-                greq = GetAvailableStaffRequest(
-                    sbu_code=req.sbu_code,
-                    department_code=req.department_code,
-                    date=d,
-                    shift_type_id=st.id,
+    
+    # Parse the tools trace to populate slots_out for the UI
+    for step in agent_result.get("reasoning_steps", []):
+        tool = step.get("tool")
+        args = step.get("args", {})
+        if tool == "create_shift":
+            slots_out.append(
+                ScheduleSlotResult(
+                    date=datetime.strptime(args.get("date", req.date_range_start.isoformat()), "%Y-%m-%d").date() if isinstance(args.get("date"), str) else args.get("date", req.date_range_start),
+                    shift_type=str(args.get("shift_type_id", "assigned")),
+                    assigned_worker=f"Worker {args.get('worker_id', '?')}",
+                    status="filled",
+                    explanation=args.get("explanation", "Assigned by AI Scheduler")
                 )
-                existing = await session.execute(
-                    select(Shift.worker_id).where(
-                        Shift.shift_type_id == st.id,
-                        Shift.date == d,
-                        Shift.status.in_([ShiftStatus.PROPOSED, ShiftStatus.CONFIRMED]),
-                    )
+            )
+        elif tool == "escalate_to_manager":
+            slots_out.append(
+                ScheduleSlotResult(
+                    date=datetime.strptime(args.get("date", req.date_range_start.isoformat()), "%Y-%m-%d").date() if isinstance(args.get("date"), str) else args.get("date", req.date_range_start),
+                    shift_type=str(args.get("shift_type_id", "unassigned")),
+                    assigned_worker=None,
+                    status="escalated",
+                    explanation=args.get("conflict_description", "Escalated by AI Scheduler")
                 )
-                exclude = set(existing.scalars().all())
-                staff = await get_available_staff_impl(session, greq, exclude_worker_ids=exclude)
-                placed = False
-                attempted: list[dict] = []
-                for cand in staff.candidates:
-                    vr = await validate_schedule_impl(
-                        session, cand.id, st.id, d
-                    )
-                    if not vr.is_valid:
-                        attempted.append({"worker_id": cand.id, "reason": vr.reason})
-                        continue
-                    creq = CreateShiftRequest(
-                        worker_id=cand.id,
-                        shift_type_id=st.id,
-                        date=d,
-                        start_time=st.start_time,
-                        end_time=st.end_time,
-                        explanation=f"Auto-assigned via schedule generator (fairness {cand.fairness_score})",
-                        confirmed=False,
-                    )
-                    cresp = await create_shift_impl(session, creq)
-                    await session.flush()
-                    await explain_decision_impl(
-                        session,
-                        ExplainDecisionRequest(
-                            worker_id=cand.id,
-                            shift_id=cresp.shift_id,
-                            assignment_context={
-                                "slot": st.name,
-                                "date": d.isoformat(),
-                                "session_id": req.session_id,
-                            },
-                            reasoning_trace=[
-                                {"step": "validate", "passed": True},
-                                {
-                                    "step": "fairness_score",
-                                    "value": cand.fairness_score,
-                                },
-                            ],
-                        ),
-                    )
-                    assigned_name = cand.name
-                    status_slot = "filled"
-                    explanation = f"Assigned {cand.name}; shift #{cresp.shift_id}"
-                    filled += 1
-                    placed = True
-                    break
+            )
 
-                if not placed:
-                    await escalate_impl(
-                        session,
-                        EscalateToManagerRequest(
-                            shift_type_id=st.id,
-                            date=d,
-                            conflict_description=(
-                                f"No valid candidate for {st.name} on {d.isoformat()}"
-                            ),
-                            agent_reasoning="Exhausted eligible workers; see attempted list.",
-                            attempted_candidates=attempted,
-                        ),
-                    )
-                    status_slot = "escalated"
-                    explanation = "Escalated to manager — no valid candidate."
-                    escalated += 1
-
-                slots_out.append(
-                    ScheduleSlotResult(
-                        date=d,
-                        shift_type=st.name,
-                        assigned_worker=assigned_name,
-                        status=status_slot,
-                        explanation=explanation,
-                    )
-                )
-        d += timedelta(days=1)
-
-    total = len(slots_out)
     return ScheduleResponse(
         slots=slots_out,
-        total_slots=total,
-        filled=filled,
-        escalated=escalated,
-        reasoning_summary=(
-            f"Generated {filled} assignments and {escalated} escalations over {total} slot attempts."
-        ),
+        total_slots=agent_result.get("total_iterations", 0),
+        filled=agent_result.get("filled", 0),
+        escalated=agent_result.get("escalated", 0),
+        reasoning_summary=agent_result.get("summary", "Complete.")
     )
-
 
 async def orchestrator_process_message(message: str, sbu_code: str, session_id: str) -> dict:
     def _run():

@@ -5,6 +5,13 @@ Pydantic models for request/response validation across all agent tools.
 from datetime import date, time, datetime
 from typing import Optional
 from pydantic import BaseModel, Field
+from enum import Enum
+
+class IntentType(str, Enum):
+    SCHEDULE = "schedule"
+    SWAP = "swap"
+    QUERY = "query"
+    REPORT = "report"
 
 
 # ── Shared ──
@@ -183,7 +190,7 @@ class OrchestratorInput(BaseModel):
 
 
 class OrchestratorOutput(BaseModel):
-    intent: str  # "schedule", "swap", "query", "report"
+    intent: IntentType
     routed_to: str  # "scheduler", "swap_agent", "direct_response"
     extracted_params: dict
     sbu_config_loaded: bool
