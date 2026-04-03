@@ -41,21 +41,34 @@ axis/
 
 ## Quick Start (Docker)
 
+### 1. Get a DeepSeek API Key
+
+The AI chat features require a DeepSeek API key.
+
+1. Sign up at [platform.deepseek.com](https://platform.deepseek.com)
+2. Go to **API Keys** and create a new key
+3. Copy the key — you will need it in the next step
+
+### 2. Run the Application
+
 ```bash
-# 1. Clone the repository
+# Clone the repository
 git clone <repo-url>
 cd axis
 
-# 2. Copy and configure environment variables
+# Create your environment file and add your DeepSeek API key
 cp .env.example .env
-# Edit .env and set DEEPSEEK_API_KEY and optionally SENDGRID_API_KEY
+# Open .env and set:
+#   DEEPSEEK_API_KEY=sk-your-key-here
 
-# 3. Start all services
+# Start all services
 docker compose up --build
 
-# 4. Seed the database (first time only)
+# Seed the database (first time only)
 docker exec axis-backend python seed.py
 ```
+
+> **Note:** Without `DEEPSEEK_API_KEY` the application will still run but AI chat scheduling will fall back to a basic heuristic mode with limited natural language understanding.
 
 Services will be available at:
 | Service  | URL                   |
