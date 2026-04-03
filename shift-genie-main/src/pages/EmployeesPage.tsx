@@ -16,6 +16,8 @@ interface Employee {
   sbu_name: string;
   certifications: string[];
   max_weekly_hours: number;
+  weekly_hours_used: number;
+  ot_hours: number;
   is_active: boolean;
   created_at: string | null;
 }
@@ -70,6 +72,12 @@ function DetailModal({ emp, onClose }: { emp: Employee; onClose: () => void }) {
           <Row label="Email" value={emp.email ?? '—'} />
           <Row label="Phone" value={emp.phone ?? '—'} />
           <Row label="Max Weekly Hours" value={`${emp.max_weekly_hours}h`} />
+          <Row label="Hours Used (this week)" value={`${emp.weekly_hours_used}h`} />
+          <Row label="OT Hours (this week)" value={
+            emp.ot_hours > 0
+              ? <span className="text-red-400 font-semibold">{emp.ot_hours}h</span>
+              : <span className="text-emerald-400">0h</span>
+          } />
           <Row label="Status" value={
             <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${emp.is_active ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
               {emp.is_active ? 'Active' : 'Inactive'}

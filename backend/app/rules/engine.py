@@ -58,20 +58,22 @@ def check_availability(
             reason=f"Worker is on approved leave for {shift_date}"
         )
 
-    # Check declared availability
-    has_slot = any(
-        slot["date"] == shift_date
-        and slot["start_time"] <= start_time
-        and slot["end_time"] >= end_time
-        and slot["is_available"]
-        for slot in availability_slots
-    )
-    if not has_slot:
-        return ValidationCheck(
-            name="availability",
-            passed=False,
-            reason=f"Worker has not declared availability for {shift_date} {start_time}-{end_time}"
+    # Check declared availability — if no records exist, treat as fully available.
+    # Only block if there is an explicit unavailability entry for this slot.
+    if availability_slots:
+        has_slot = any(
+            slot["date"] == shift_date
+            and slot["start_time"] <= start_time
+            and slot["end_time"] >= end_time
+            and slot["is_available"]
+            for slot in availability_slots
         )
+        if not has_slot:
+            return ValidationCheck(
+                name="availability",
+                passed=False,
+                reason=f"Worker has not declared availability for {shift_date} {start_time}-{end_time}"
+            )
 
     return ValidationCheck(name="availability", passed=True, reason="Worker is available")
 

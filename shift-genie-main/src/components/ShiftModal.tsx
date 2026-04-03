@@ -6,6 +6,7 @@ import { useAxis } from '@/context/AxisContext';
 import {
   fetchWorkersList,
   fetchShiftTypesList,
+  fetchOTWorkers,
   createShiftManual,
   updateShift,
   deleteShift,
@@ -65,6 +66,13 @@ export function ShiftModal({ mode, initialDate, shift, onClose, onSaved }: Shift
     enabled: !!sbuCode && !!departmentCode,
   });
 
+  // Fetch weekly-hours data so we can warn about OT before saving
+  const { data: otWorkers = [] } = useQuery({
+    queryKey: ['ot-workers', sbuCode, departmentCode, date],
+    queryFn: () => fetchOTWorkers(sbuCode, departmentCode, date),
+    enabled: !!sbuCode && !!departmentCode && !!date && typeof workerId === 'number',
+  });
+
   // In edit mode, if the shift type changes and user hasn't edited times yet, sync times from type
   const [timesTouched, setTimesTouched] = useState(false);
 
@@ -92,6 +100,32 @@ export function ShiftModal({ mode, initialDate, shift, onClose, onSaved }: Shift
 
     const workerName = workerId ? workers.find(w => w.id === workerId)?.name ?? '' : 'Open Shift';
     const stName = shiftTypes.find(s => s.id === shiftTypeId)?.name ?? '';
+
+    // ── OT Warning: intercept before confirmation if worker is at/over 40h ──
+    if (typeof workerId === 'number') {
+      const otWorker = otWorkers.find(w => w.id === workerId);
+      if (otWorker && otWorker.weekly_hours_used >= otWorker.max_weekly_hours) {
+        const otResult = await Swal.fire({
+          title: '⚠️ Overtime Warning',
+          html: `
+            <div style="text-align:left;font-size:14px;line-height:1.8">
+              <b>${otWorker.name}</b> already has
+              <b>${otWorker.weekly_hours_used}h</b> assigned this week
+              (limit: ${otWorker.max_weekly_hours}h).<br><br>
+              Assigning this shift will count as <b>Overtime</b>.
+              Do you want to proceed?
+            </div>
+          `,
+          icon: 'warning',
+          showCancelButton: true,
+          confirmButtonText: 'Yes, assign as OT',
+          cancelButtonText: 'Cancel',
+          confirmButtonColor: '#85409D',
+          cancelButtonColor: '#9ca3af',
+        });
+        if (!otResult.isConfirmed) return;
+      }
+    }
 
     const result = await Swal.fire({
       title: mode === 'create' ? 'Create Shift?' : 'Save Changes?',

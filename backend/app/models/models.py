@@ -17,10 +17,24 @@ Base = declarative_base()
 
 class ShiftStatus(str, PyEnum):
     OPEN = "open"
+    PENDING = "pending"   # assigned worker has a pending leave request
     PROPOSED = "proposed"
     CONFIRMED = "confirmed"
     CANCELLED = "cancelled"
     SWAPPED = "swapped"
+
+
+class OTRequestStatus(str, PyEnum):
+    OPEN = "open"
+    NOTIFIED = "notified"
+    ASSIGNED = "assigned"
+    CANCELLED = "cancelled"
+
+
+class OTApplicationStatus(str, PyEnum):
+    PENDING = "pending"
+    ASSIGNED = "assigned"
+    REJECTED = "rejected"
 
 
 class LeaveStatus(str, PyEnum):
@@ -156,7 +170,7 @@ class LeaveRequest(Base):
 
     id = Column(Integer, primary_key=True)
     worker_id = Column(Integer, ForeignKey("workers.id"), nullable=False)
-    shift_id = Column(Integer, ForeignKey("shifts.id"))  # The shift needing coverage
+    shift_id = Column(Integer, ForeignKey("shifts.id", ondelete="SET NULL"))  # The shift needing coverage
     date = Column(Date, nullable=False)
     reason = Column(Text)
     status = Column(Enum(LeaveStatus, name="leave_status", create_type=False, values_callable=lambda x: [e.value for e in x]), default=LeaveStatus.PENDING)
@@ -185,6 +199,51 @@ class Escalation(Base):
     resolved_at = Column(DateTime)
 
     shift_type = relationship("ShiftType")
+
+
+class OTRequest(Base):
+    """An open shift advertised for overtime coverage."""
+    __tablename__ = "ot_requests"
+
+    id                 = Column(Integer, primary_key=True)
+    shift_id           = Column(Integer, ForeignKey("shifts.id"), nullable=False)
+    escalation_id      = Column(Integer, ForeignKey("escalations.id"), nullable=True)
+    leave_request_id   = Column(Integer, ForeignKey("leave_requests.id"), nullable=True)
+    status             = Column(Enum(OTRequestStatus, name="ot_request_status", create_type=False,
+                                    values_callable=lambda x: [e.value for e in x]),
+                                default=OTRequestStatus.OPEN)
+    created_at         = Column(DateTime, default=datetime.utcnow)
+    assigned_at        = Column(DateTime, nullable=True)
+    assigned_worker_id = Column(Integer, ForeignKey("workers.id"), nullable=True)
+    notes              = Column(Text, nullable=True)
+
+    shift           = relationship("Shift")
+    escalation      = relationship("Escalation")
+    leave_request   = relationship("LeaveRequest")
+    assigned_worker = relationship("Worker", foreign_keys=[assigned_worker_id])
+    applications    = relationship("OTApplication", back_populates="ot_request",
+                                   order_by="OTApplication.applied_at")
+
+
+class OTApplication(Base):
+    """A worker's application (or notification) for an OT shift — FIFO ordered by applied_at."""
+    __tablename__ = "ot_applications"
+
+    id             = Column(Integer, primary_key=True)
+    ot_request_id  = Column(Integer, ForeignKey("ot_requests.id"), nullable=False)
+    worker_id      = Column(Integer, ForeignKey("workers.id"), nullable=False)
+    status         = Column(Enum(OTApplicationStatus, name="ot_application_status", create_type=False,
+                                 values_callable=lambda x: [e.value for e in x]),
+                            default=OTApplicationStatus.PENDING)
+    applied_at     = Column(DateTime, default=datetime.utcnow)
+    resolved_at    = Column(DateTime, nullable=True)
+    notified_at    = Column(DateTime, nullable=True)
+    email_sent     = Column(Boolean, default=False)
+
+    ot_request = relationship("OTRequest", back_populates="applications")
+    worker     = relationship("Worker")
+
+    __table_args__ = (UniqueConstraint("ot_request_id", "worker_id"),)
 
 
 class AgentLog(Base):

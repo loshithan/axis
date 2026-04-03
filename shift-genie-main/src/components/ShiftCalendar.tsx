@@ -32,8 +32,22 @@ const WORKER_TYPE_TO_ROLE: Record<string, ShiftRole> = {
   admin: 'admin',
 };
 
+const STATUS_PRIORITY: Record<string, number> = {
+  confirmed: 4,
+  proposed: 3,
+  pending: 2,
+  open: 1,
+  cancelled: 0,
+  swapped: 0,
+};
+
 function toRole(workerType: string): ShiftRole {
   return WORKER_TYPE_TO_ROLE[workerType] ?? 'admin';
+}
+
+function itemRole(item: ShiftListItem): ShiftRole {
+  const laneType = item.worker_type || item.required_employee_type || '';
+  return toRole(laneType);
 }
 
 function combineDateTime(dateStr: string, timeStr: string): Date {
@@ -58,7 +72,7 @@ function itemToShift(item: ShiftListItem): Shift & { _raw: ShiftListItem } {
       : `${timeRange} — (${item.shift_type_name} — ${item.worker_name})`,
     start,
     end,
-    role: toRole(item.worker_type),
+    role: itemRole(item),
     employee: item.worker_name || undefined,
     _raw: item,
   };
@@ -123,7 +137,34 @@ export function ShiftCalendar() {
     enabled: !!sbuCode && !!departmentCode,
   });
 
-  const shifts = useMemo(() => items.map(itemToShift), [items]);
+  const effectiveItems = useMemo(() => {
+    const bySlot = new Map<string, ShiftListItem>();
+    for (const item of items) {
+      // Keep separate lanes per role so doctor/nurse shifts at same time do not override each other.
+      const lane = item.worker_type || item.required_employee_type || 'untyped';
+      const key = `${item.date}|${item.shift_type_id}|${item.start_time}|${item.end_time}|${lane}`;
+      const prev = bySlot.get(key);
+      if (!prev) {
+        bySlot.set(key, item);
+        continue;
+      }
+
+      const prevScore = (STATUS_PRIORITY[prev.status] ?? 0) + (prev.worker_id ? 10 : 0);
+      const itemScore = (STATUS_PRIORITY[item.status] ?? 0) + (item.worker_id ? 10 : 0);
+      if (itemScore > prevScore || (itemScore === prevScore && item.id > prev.id)) {
+        bySlot.set(key, item);
+      }
+    }
+    return Array.from(bySlot.values()).sort((a, b) => {
+      const d = a.date.localeCompare(b.date);
+      if (d !== 0) return d;
+      const s = a.start_time.localeCompare(b.start_time);
+      if (s !== 0) return s;
+      return a.id - b.id;
+    });
+  }, [items]);
+
+  const shifts = useMemo(() => effectiveItems.map(itemToShift), [effectiveItems]);
 
   const events: Event[] = useMemo(() =>
     shifts.map(s => ({ title: s.title, start: s.start, end: s.end, resource: s as Shift & { _raw: ShiftListItem } })),
@@ -131,8 +172,24 @@ export function ShiftCalendar() {
   );
 
   const eventStyleGetter = useCallback((event: Event) => {
-    const shift = event.resource as Shift;
-    const isOpen = !shift.employee;
+    const shift = event.resource as Shift & { _raw: ShiftListItem };
+    const status = shift._raw?.status;
+
+    // PENDING: assigned worker has a leave request — flag as uncovered/awaiting swap
+    if (status === 'pending') {
+      return {
+        style: {
+          backgroundColor: 'hsla(38, 92%, 50%, 0.15)',
+          color: 'hsl(38, 92%, 40%)',
+          borderLeft: '3px dashed hsl(38, 92%, 50%)',
+          fontWeight: 600,
+          opacity: 0.95,
+        },
+      };
+    }
+
+    // OPEN: no worker assigned
+    const isOpen = !shift.employee || status === 'open';
     if (isOpen) {
       return {
         style: {
@@ -144,6 +201,7 @@ export function ShiftCalendar() {
         },
       };
     }
+
     return {
       style: {
         backgroundColor: ROLE_BG[shift.role],
@@ -176,6 +234,10 @@ export function ShiftCalendar() {
         </div>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-4 text-xs text-muted-foreground">
+            <div className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full border-2 border-dashed border-amber-500" style={{ backgroundColor: 'hsla(38,92%,50%,0.15)' }} />
+              <span>pending swap</span>
+            </div>
             {(Object.entries(ROLE_COLORS) as [ShiftRole, string][]).map(([role, color]) => (
               <div key={role} className="flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />

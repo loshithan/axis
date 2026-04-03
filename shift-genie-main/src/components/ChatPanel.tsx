@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import { ChatMessage } from '@/types/shift';
 import { useAxis } from '@/context/AxisContext';
-import { orchestratorProcess, generateSchedule, searchWorker, fetchShifts, fetchShiftTypesList, createShiftManual, createLeaveRequest, ScheduleSlotResult, ShiftTypeItem } from '@/lib/api';
+import { orchestratorProcess, generateSchedule, searchWorker, fetchShifts, fetchShiftTypesList, fetchWorkersList, fetchOTWorkers, createShiftManual, updateShift, createLeaveRequest, generateQueryResponse, ScheduleSlotResult, ShiftTypeItem, WorkerItem } from '@/lib/api';
 
 const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
@@ -126,11 +126,26 @@ function parseDateRangeFromText(text: string): { start: string; end: string } {
     }
   }
 
-  // "from X to Y" or "April 10 to April 15"
-  const toMatch = text.match(/(?:from\s+)?(.+?)\s+(?:to|until|through)\s+(.+?)(?:\s|$)/i);
+  // "from X to Y" or "April 10 to April 15" or "April 1 to 15"
+  const toMatch = text.match(/(?:from\s+)?(.+?)\s+(?:to|until|through)\s+(.+)$/i);
   if (toMatch) {
-    const s = parseDateFromText(toMatch[1]);
-    const e = parseDateFromText(toMatch[2]);
+    const left = toMatch[1].trim();
+    const rightRaw = toMatch[2].trim();
+
+    // If right side is day-only (e.g., "15"), inherit month/year from left side.
+    const dayOnly = rightRaw.match(/^(\d{1,2})(?:st|nd|rd|th)?$/i);
+    let right = rightRaw;
+    if (dayOnly) {
+      const leftLower = left.toLowerCase();
+      const monthName = MONTHS.find((m) => leftLower.includes(m));
+      const yearMatch = leftLower.match(/\b(20\d{2})\b/);
+      if (monthName) {
+        right = `${dayOnly[1]} ${monthName}${yearMatch ? ` ${yearMatch[1]}` : ''}`;
+      }
+    }
+
+    const s = parseDateFromText(left);
+    const e = parseDateFromText(right);
     if (s !== e) return { start: s, end: e };
   }
 
@@ -163,15 +178,116 @@ function parseTimeRange(text: string): { start_time?: string; end_time?: string 
   return {};
 }
 
-/** Extract a worker's full name from phrasing like "for Kavinda Silva" or "assign to John Doe". */
+const ROLE_KEYWORDS = new Set([
+  'doctor', 'doctors', 'nurse', 'nurses', 'technician', 'technicians',
+  'admin', 'admins', 'staff', 'worker', 'workers', 'all',
+]);
+
+/** Extract a worker's full name from phrasing like "for Kavinda Silva" or "assign to John Doe".
+ *  Returns null for generic role words like "for doctors". */
 function extractWorkerName(text: string): string | null {
   // "for Kavinda Silva" — two or more capitalised words after "for"
   const forMatch = text.match(/\bfor\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/);
-  if (forMatch) return forMatch[1];
+  if (forMatch && !ROLE_KEYWORDS.has(forMatch[1].toLowerCase())) return forMatch[1];
   // "assign to John Doe" or "assign John Doe"
   const assignMatch = text.match(/\bassign(?:ed)?\s+(?:to\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/);
-  if (assignMatch) return assignMatch[1];
+  if (assignMatch && !ROLE_KEYWORDS.has(assignMatch[1].toLowerCase())) return assignMatch[1];
   return null;
+}
+
+function extractEmployeeType(text: string): WorkerItem['employee_type'] | null {
+  const lower = text.toLowerCase();
+  if (/\bdoctors?\b/.test(lower)) return 'doctor';
+  if (/\bnurses?\b/.test(lower)) return 'nurse';
+  if (/\btechnicians?\b/.test(lower)) return 'technician';
+  if (/\badmins?\b/.test(lower)) return 'admin';
+  return null;
+}
+
+/** Parse comma/and-separated day numbers like "13,14" or "13 and 14" into date strings.
+ *  Falls back to single-date parse if no multi-date pattern found. */
+function parseMultipleDates(text: string): string[] {
+  const today = new Date();
+  const lower = text.toLowerCase().replace(/(\d+)(?:st|nd|rd|th)\b/g, '$1');
+
+  // Detect explicit month
+  let targetMonth = today.getMonth();
+  let targetYear = today.getFullYear();
+  for (let i = 0; i < MONTHS.length; i++) {
+    if (lower.includes(MONTHS[i])) { targetMonth = i; break; }
+  }
+  const yearMatch = lower.match(/\b(20\d{2})\b/);
+  if (yearMatch) targetYear = parseInt(yearMatch[1]);
+
+  const mo = String(targetMonth + 1).padStart(2, '0');
+
+  // "13,14" or "13, 14"
+  const commaMatch = lower.match(/\b(\d{1,2})\s*,\s*(\d{1,2})\b/);
+  if (commaMatch) {
+    return [
+      `${targetYear}-${mo}-${String(parseInt(commaMatch[1])).padStart(2, '0')}`,
+      `${targetYear}-${mo}-${String(parseInt(commaMatch[2])).padStart(2, '0')}`,
+    ];
+  }
+
+  // "13 and 14"
+  const andMatch = lower.match(/\b(\d{1,2})\s+and\s+(\d{1,2})\b/);
+  if (andMatch) {
+    return [
+      `${targetYear}-${mo}-${String(parseInt(andMatch[1])).padStart(2, '0')}`,
+      `${targetYear}-${mo}-${String(parseInt(andMatch[2])).padStart(2, '0')}`,
+    ];
+  }
+
+  return [parseDateFromText(text)];
+}
+
+function expandDateRange(start: string, end: string): string[] {
+  const out: string[] = [];
+  const s = new Date(start);
+  const e = new Date(end);
+  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return [start];
+  const cur = new Date(s);
+  while (cur <= e) {
+    out.push(cur.toISOString().slice(0, 10));
+    cur.setDate(cur.getDate() + 1);
+  }
+  return out;
+}
+
+function looksLikeNewCommand(text: string): boolean {
+  const lower = text.toLowerCase();
+  const hasAction = /\b(create|add|assign|schedule|generate|roster|make|set)\b/.test(lower);
+  const hasDateSignal = /\bfrom\b.+\bto\b/.test(lower)
+    || /\b\d{4}-\d{1,2}-\d{1,2}\b/.test(lower)
+    || MONTHS.some(m => lower.includes(m));
+  return hasAction && hasDateSignal;
+}
+
+function extractRequestedShiftTypes(text: string, types: ShiftTypeItem[]): ShiftTypeItem[] {
+  const lower = text.toLowerCase();
+  const byId = new Map<number, ShiftTypeItem>();
+  const add = (st: ShiftTypeItem | undefined) => {
+    if (st) byId.set(st.id, st);
+  };
+
+  if (lower.includes('all')) return types;
+
+  const hasMorning = /\bmorning\b/.test(lower);
+  const hasAfternoon = /\bafternoon\b/.test(lower);
+  const hasEvening = /\bevening\b/.test(lower);
+  const hasNight = /\bnight\b/.test(lower);
+
+  if (hasMorning) add(types.find(t => /\bmorning\b/.test(t.name.toLowerCase())));
+  if (hasAfternoon || hasEvening) add(types.find(t => /\bafternoon\b/.test(t.name.toLowerCase())));
+  if (hasNight) add(types.find(t => /\bnight\b/.test(t.name.toLowerCase())));
+
+  for (const st of types) {
+    const stName = st.name.toLowerCase();
+    if (lower.includes(stName)) add(st);
+  }
+
+  return Array.from(byId.values());
 }
 
 /** Returns true when the message is asking to create/add a single shift (not bulk-generate). */
@@ -248,10 +364,20 @@ function buildAssistantResponse(
   );
 }
 
+interface PendingShiftTypeContext {
+  action: 'select_shift_type';
+  dates: string[];
+  workerId: number | null;
+  workerDisplayName: string;
+  shiftTypes: ShiftTypeItem[];
+  requestedEmployeeType?: WorkerItem['employee_type'] | null;
+}
+
 export function ChatPanel() {
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MESSAGE]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [pendingContext, setPendingContext] = useState<PendingShiftTypeContext | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
   const { sbuCode, departmentCode, sessionId } = useAxis();
@@ -272,6 +398,132 @@ export function ChatPanel() {
     let responseText = '';
 
     try {
+      // ── Handle follow-up reply to a pending shift-type selection ──
+      if (pendingContext?.action === 'select_shift_type') {
+        if (looksLikeNewCommand(trimmed)) {
+          setPendingContext(null);
+        } else {
+        const reply = trimmed.toLowerCase().trim();
+        const { dates, workerId, workerDisplayName, shiftTypes, requestedEmployeeType } = pendingContext;
+        const typesToCreate = extractRequestedShiftTypes(reply, shiftTypes);
+
+        if (typesToCreate.length === 0) {
+          responseText =
+            `⚠️ Couldn't match **"${trimmed}"** to a shift type. Say **"all"** or pick one:\n\n` +
+            shiftTypes.map(s => `- **${s.name}** (${s.start_time.slice(0, 5)}–${s.end_time.slice(0, 5)})`).join('\n');
+        } else {
+          setPendingContext(null);
+          const lines: string[] = [];
+          let roleWorkers: WorkerItem[] = [];
+          const roleLoad = new Map<number, number>();
+
+          if (!workerId && requestedEmployeeType) {
+            const workers = await fetchWorkersList(sbuCode, departmentCode);
+            roleWorkers = workers.filter(w => w.employee_type === requestedEmployeeType);
+            for (const rw of roleWorkers) roleLoad.set(rw.id, 0);
+
+            if (dates.length > 0) {
+              const existingRange = await fetchShifts(sbuCode, departmentCode, dates[0], dates[dates.length - 1]);
+              for (const s of existingRange) {
+                if (!s.worker_id) continue;
+                if (s.status === 'cancelled' || s.status === 'swapped') continue;
+                if (roleLoad.has(s.worker_id)) {
+                  roleLoad.set(s.worker_id, (roleLoad.get(s.worker_id) || 0) + 1);
+                }
+              }
+            }
+          }
+
+          for (const date of dates) {
+            const otWorkers = (!workerId && requestedEmployeeType)
+              ? await fetchOTWorkers(sbuCode, departmentCode, date)
+              : [];
+            const otMap = new Map(otWorkers.map(w => [w.id, w]));
+
+            for (const st of typesToCreate) {
+              try {
+                const existingShifts = await fetchShifts(sbuCode, departmentCode, date, date);
+                const sameSlot = existingShifts.find(s => {
+                  if (
+                    s.shift_type_id !== st.id
+                    || s.start_time !== st.start_time
+                    || s.end_time !== st.end_time
+                    || s.status === 'cancelled'
+                    || s.status === 'swapped'
+                  ) return false;
+                  if (requestedEmployeeType && s.required_employee_type && s.required_employee_type !== requestedEmployeeType) return false;
+                  return true;
+                });
+
+                let slotWorkerId = workerId;
+                let slotWorkerName = workerDisplayName;
+                let slotIsOT = false;
+
+                if (!workerId && requestedEmployeeType && roleWorkers.length > 0) {
+                  const available = roleWorkers
+                    .filter(w => !existingShifts.some(s =>
+                      s.worker_id === w.id
+                      && s.status !== 'cancelled'
+                      && s.status !== 'swapped'
+                      && st.start_time < s.end_time
+                      && s.start_time < st.end_time,
+                    ))
+                    .sort((a, b) => {
+                      const loadDiff = (roleLoad.get(a.id) || 0) - (roleLoad.get(b.id) || 0);
+                      if (loadDiff !== 0) return loadDiff;
+                      const ah = otMap.get(a.id)?.weekly_hours_used ?? 0;
+                      const bh = otMap.get(b.id)?.weekly_hours_used ?? 0;
+                      return ah - bh;
+                    });
+
+                  const chosen = available[0];
+                  if (chosen) {
+                    slotWorkerId = chosen.id;
+                    slotWorkerName = chosen.name;
+                    roleLoad.set(chosen.id, (roleLoad.get(chosen.id) || 0) + 1);
+                    const ot = otMap.get(chosen.id);
+                    slotIsOT = !!ot && ot.weekly_hours_used >= ot.max_weekly_hours;
+                  } else {
+                    slotWorkerName = `Open (no available ${requestedEmployeeType})`;
+                  }
+                }
+
+                if (sameSlot) {
+                  await updateShift(sameSlot.id, {
+                    worker_id: slotWorkerId,
+                    status: slotWorkerId ? 'confirmed' : 'open',
+                    required_employee_type: !workerId && requestedEmployeeType ? requestedEmployeeType : null,
+                  });
+                } else {
+                  await createShiftManual({
+                    worker_id: slotWorkerId,
+                    shift_type_id: st.id,
+                    date,
+                    start_time: st.start_time,
+                    end_time: st.end_time,
+                    status: slotWorkerId ? 'confirmed' : 'open',
+                    required_employee_type: !workerId && requestedEmployeeType ? requestedEmployeeType : null,
+                  });
+                }
+                lines.push(`- **${date}** · ${st.name} (${st.start_time.slice(0, 5)}–${st.end_time.slice(0, 5)}): ${slotWorkerName}${slotIsOT ? ' (OT)' : ''}`);
+              } catch (err) {
+                lines.push(`- **${date}** · ${st.name}: ❌ ${err instanceof Error ? err.message : String(err)}`);
+              }
+            }
+          }
+          responseText = `✅ **${lines.length} shift(s) saved!**\n\n${lines.join('\n')}`;
+          queryClient.invalidateQueries({ queryKey: ['shifts'] });
+        }
+
+        setMessages(prev => [
+          ...prev,
+          { id: crypto.randomUUID(), role: 'assistant', content: responseText },
+        ]);
+        setIsTyping(false);
+        return;
+        }
+      }
+
       if (!sbuCode || !departmentCode) {
         responseText = '⚠️ Please select an SBU and department from the top bar before scheduling.';
       } else {
@@ -287,81 +539,205 @@ export function ChatPanel() {
           const epShiftType = ep.shift_type as string | null;
 
           // LLM extraction first, then regex fallback for worker name
-          const workerName = (ep.worker_name as string | null) || extractWorkerName(trimmed);
+          const llmWorkerName = ep.worker_name as string | null;
+          const workerName = (
+            llmWorkerName && !ROLE_KEYWORDS.has(llmWorkerName.toLowerCase())
+              ? llmWorkerName
+              : null
+          ) || extractWorkerName(trimmed);
+          const requestedEmployeeType = extractEmployeeType(trimmed);
 
-          if (workerName || isSingleShiftRequest(trimmed)) {
-            // ── Single-shift creation path ──
-            const singleDate = (ep.date_range_start as string) || parseDateFromText(trimmed);
+          const lower = trimmed.toLowerCase();
+          const hasManualShiftSelection = /\bonly\b/.test(lower) || /\bmorning|afternoon|evening|night\b/.test(lower);
+
+          if (workerName || isSingleShiftRequest(trimmed) || hasManualShiftSelection) {
+            // ── Single/multi-date shift creation path ──
+            const dates = (ep.date_range_start && ep.date_range_end)
+              ? expandDateRange(ep.date_range_start as string, ep.date_range_end as string)
+              : ep.date_range_start
+                ? [ep.date_range_start as string]
+                : parseMultipleDates(trimmed);
             const shiftTypes = await fetchShiftTypesList(sbuCode, departmentCode);
 
             if (shiftTypes.length === 0) {
               responseText = `⚠️ No shift types found for this department. Please check your SBU/department selection.`;
             } else {
-              // Match shift type: prefer LLM-provided name, then score against message text
-              const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-              const needle = normalize(epShiftType ?? '');
-              const matched = needle
-                ? (shiftTypes.find(st => normalize(st.name).includes(needle))
-                    ?? shiftTypes.find(st => needle.includes(normalize(st.name))))
-                : findBestShiftType(trimmed, shiftTypes);
+              // Resolve worker first (needed for conflict checks and pending context)
+              let workerId: number | null = null;
+              let workerDisplayName = 'Open (unassigned)';
+              let canProceed = true;
+              let roleWorkers: WorkerItem[] = [];
+              const roleLoad = new Map<number, number>();
 
-              if (!matched) {
-                const available = shiftTypes.map(s =>
-                  `- **${s.name}** (${s.start_time.slice(0, 5)}–${s.end_time.slice(0, 5)})`
-                ).join('\n');
-                responseText = `ℹ️ Which shift type would you like to create on **${singleDate}**?\n\n${available}`;
-              } else {
-                let workerId: number | null = null;
-                let workerDisplayName = 'Open (unassigned)';
-                let canProceed = true;
+              if (workerName) {
+                const workers = await searchWorker(workerName, sbuCode);
+                if (workers.length === 0) {
+                  responseText = `⚠️ Could not find a worker named **"${workerName}"**. Please check the name and try again.`;
+                  canProceed = false;
+                } else {
+                  const worker = workers[0];
+                  workerId = worker.id;
+                  workerDisplayName = worker.name;
 
-                if (workerName) {
-                  const workers = await searchWorker(workerName, sbuCode);
-                  if (workers.length === 0) {
-                    responseText = `⚠️ Could not find a worker named **"${workerName}"**. Please check the name and try again.`;
-                    canProceed = false;
-                  } else {
-                    const worker = workers[0];
-                    workerId = worker.id;
-                    workerDisplayName = worker.name;
-
-                    // Pre-flight: worker already has a shift on this date?
-                    const existingShifts = await fetchShifts(sbuCode, departmentCode, singleDate, singleDate);
+                  // Pre-flight: worker already has a shift on any of the requested dates?
+                  for (const d of dates) {
+                    const existingShifts = await fetchShifts(sbuCode, departmentCode, d, d);
                     const workerExisting = existingShifts.find(s => s.worker_id === worker.id);
                     if (workerExisting) {
                       responseText =
-                        `⚠️ **${worker.name}** already has a shift on **${singleDate}**:\n\n` +
+                        `⚠️ **${worker.name}** already has a shift on **${d}**:\n\n` +
                         `- **${workerExisting.shift_type_name}** (${workerExisting.start_time.slice(0, 5)}–${workerExisting.end_time.slice(0, 5)}) \`[${workerExisting.status}]\`\n\n` +
                         `A worker cannot be assigned to more than one shift per day.`;
                       canProceed = false;
+                      break;
                     }
                   }
                 }
+              } else if (requestedEmployeeType) {
+                const workers = await fetchWorkersList(sbuCode, departmentCode);
+                roleWorkers = workers.filter(w => w.employee_type === requestedEmployeeType);
+                if (roleWorkers.length === 0) {
+                  responseText = `⚠️ No active **${requestedEmployeeType}** workers were found in this department.`;
+                  canProceed = false;
+                } else {
+                  workerDisplayName = `${requestedEmployeeType}s (auto-assigned)`;
+                  for (const rw of roleWorkers) roleLoad.set(rw.id, 0);
 
-                if (canProceed) {
-                  try {
-                    await createShiftManual({
-                      worker_id: workerId,
-                      shift_type_id: matched.id,
-                      date: singleDate,
-                      start_time: matched.start_time,
-                      end_time: matched.end_time,
-                      status: workerId ? 'confirmed' : 'open',
-                    });
-                    responseText =
-                      `✅ **Shift created!**\n\n` +
-                      `- **Shift:** ${matched.name}\n` +
-                      `- **Date:** ${singleDate}\n` +
-                      `- **Worker:** ${workerDisplayName}\n` +
-                      `- **Time:** ${matched.start_time.slice(0, 5)}–${matched.end_time.slice(0, 5)}`;
-                    queryClient.invalidateQueries({ queryKey: ['shifts'] });
-                  } catch (err) {
-                    const msg = err instanceof Error ? err.message : String(err);
-                    const isConflict = msg.includes('409') || msg.toLowerCase().includes('conflict');
-                    responseText = isConflict
-                      ? `⚠️ **Schedule conflict:** ${msg.replace(/.*Conflict:\s*/i, '')}`
-                      : `❌ **Failed to create shift:** ${msg}`;
+                  const rangeStart = dates[0];
+                  const rangeEnd = dates[dates.length - 1];
+                  const existingRange = await fetchShifts(sbuCode, departmentCode, rangeStart, rangeEnd);
+                  for (const s of existingRange) {
+                    if (!s.worker_id) continue;
+                    if (s.status === 'cancelled' || s.status === 'swapped') continue;
+                    if (roleLoad.has(s.worker_id)) {
+                      roleLoad.set(s.worker_id, (roleLoad.get(s.worker_id) || 0) + 1);
+                    }
                   }
+                }
+              }
+
+              if (canProceed) {
+                // Match shift type(s): prefer explicit text extraction; fallback to LLM-single or scorer.
+                const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+                const needle = normalize(epShiftType ?? '');
+                const explicitMatches = extractRequestedShiftTypes(trimmed, shiftTypes);
+                const llmSingle = needle
+                  ? (shiftTypes.find(st => normalize(st.name).includes(needle))
+                      ?? shiftTypes.find(st => needle.includes(normalize(st.name))))
+                  : null;
+                const scoredSingle = findBestShiftType(trimmed, shiftTypes);
+                const matchedTypes = explicitMatches.length > 0
+                  ? explicitMatches
+                  : llmSingle
+                    ? [llmSingle]
+                    : scoredSingle
+                      ? [scoredSingle]
+                      : [];
+
+                if (matchedTypes.length === 0) {
+                  // Ask user to pick shift type — store pending context for the follow-up reply
+                  setPendingContext({ action: 'select_shift_type', dates, workerId, workerDisplayName, shiftTypes, requestedEmployeeType });
+                  const available = shiftTypes.map(s =>
+                    `- **${s.name}** (${s.start_time.slice(0, 5)}–${s.end_time.slice(0, 5)})`
+                  ).join('\n');
+                  const dateLabel = dates.length > 1 ? dates.join(' & ') : dates[0];
+                  responseText =
+                    `ℹ️ Which shift type would you like to create on **${dateLabel}**?\n\n${available}\n\nSay **"all"** to create all shift types.`;
+                } else {
+                  // Create shift(s) immediately
+                  const lines: string[] = [];
+                  for (const date of dates) {
+                    for (const matched of matchedTypes) {
+                      try {
+                        const existingShifts = await fetchShifts(sbuCode, departmentCode, date, date);
+                        const sameSlot = existingShifts.find(s => {
+                          if (
+                            s.shift_type_id !== matched.id
+                            || s.start_time !== matched.start_time
+                            || s.end_time !== matched.end_time
+                            || s.status === 'cancelled'
+                            || s.status === 'swapped'
+                          ) return false;
+                          if (requestedEmployeeType && s.required_employee_type && s.required_employee_type !== requestedEmployeeType) return false;
+                          return true;
+                        });
+
+                        if (sameSlot) {
+                          let slotWorkerId = workerId;
+                          let slotWorkerName = workerDisplayName;
+
+                          if (!workerId && requestedEmployeeType && roleWorkers.length > 0) {
+                            const available = roleWorkers
+                              .filter(w => !existingShifts.some(s =>
+                                s.worker_id === w.id
+                                && s.status !== 'cancelled'
+                                && s.status !== 'swapped'
+                                && matched.start_time < s.end_time
+                                && s.start_time < matched.end_time,
+                              ))
+                              .sort((a, b) => (roleLoad.get(a.id) || 0) - (roleLoad.get(b.id) || 0));
+
+                            const chosen = available[0];
+                            if (chosen) {
+                              slotWorkerId = chosen.id;
+                              slotWorkerName = chosen.name;
+                              roleLoad.set(chosen.id, (roleLoad.get(chosen.id) || 0) + 1);
+                            } else {
+                              slotWorkerName = `Open (no available ${requestedEmployeeType})`;
+                            }
+                          }
+
+                          await updateShift(sameSlot.id, {
+                            worker_id: slotWorkerId,
+                            status: slotWorkerId ? 'confirmed' : 'open',
+                            required_employee_type: !workerId && requestedEmployeeType ? requestedEmployeeType : null,
+                          });
+                          lines.push(`- **${date}** · ${matched.name} (${matched.start_time.slice(0, 5)}–${matched.end_time.slice(0, 5)}): ${slotWorkerName}`);
+                        } else {
+                          let slotWorkerId = workerId;
+                          let slotWorkerName = workerDisplayName;
+
+                          if (!workerId && requestedEmployeeType && roleWorkers.length > 0) {
+                            const available = roleWorkers
+                              .filter(w => !existingShifts.some(s =>
+                                s.worker_id === w.id
+                                && s.status !== 'cancelled'
+                                && s.status !== 'swapped'
+                                && matched.start_time < s.end_time
+                                && s.start_time < matched.end_time,
+                              ))
+                              .sort((a, b) => (roleLoad.get(a.id) || 0) - (roleLoad.get(b.id) || 0));
+
+                            const chosen = available[0];
+                            if (chosen) {
+                              slotWorkerId = chosen.id;
+                              slotWorkerName = chosen.name;
+                              roleLoad.set(chosen.id, (roleLoad.get(chosen.id) || 0) + 1);
+                            } else {
+                              slotWorkerName = `Open (no available ${requestedEmployeeType})`;
+                            }
+                          }
+
+                          await createShiftManual({
+                            worker_id: slotWorkerId,
+                            shift_type_id: matched.id,
+                            date,
+                            start_time: matched.start_time,
+                            end_time: matched.end_time,
+                            status: slotWorkerId ? 'confirmed' : 'open',
+                            required_employee_type: !workerId && requestedEmployeeType ? requestedEmployeeType : null,
+                          });
+                          lines.push(`- **${date}** · ${matched.name} (${matched.start_time.slice(0, 5)}–${matched.end_time.slice(0, 5)}): ${slotWorkerName}`);
+                        }
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : String(err);
+                        const isConflict = msg.includes('409') || msg.toLowerCase().includes('conflict');
+                        lines.push(`- **${date}** · ${matched.name}: ${isConflict ? '⚠️ conflict' : `❌ ${msg}`}`);
+                      }
+                    }
+                  }
+                  responseText = `✅ **${lines.length} shift(s) saved!**\n\n${lines.join('\n')}`;
+                  queryClient.invalidateQueries({ queryKey: ['shifts'] });
                 }
               }
             }
@@ -371,11 +747,13 @@ export function ChatPanel() {
             const headcount = (ep.headcount as number) || extractHeadcount(trimmed);
             const startTime = (ep.start_time as string | null) || regexTime.start_time;
             const endTime   = (ep.end_time   as string | null) || regexTime.end_time;
+            const openOnly = /\bopen\s+shifts?\b/.test(trimmed.toLowerCase());
 
             const constraints: Record<string, unknown> = {
               ...(ep.constraints as Record<string, unknown> | undefined),
               ...(startTime ? { start_time: startTime } : {}),
               ...(endTime   ? { end_time:   endTime   } : {}),
+              ...(openOnly ? { open_only: true } : {}),
             };
 
             const result = await generateSchedule({
@@ -395,6 +773,11 @@ export function ChatPanel() {
         } else if (routing.intent === 'swap') {
           const ep = routing.extracted_params as Record<string, unknown>;
           const swapWorkerName = ep.worker_name as string | null;
+          const lower = trimmed.toLowerCase();
+          const hasRangeIntent = /\b(this week|next week|from\s+.+\s+(?:to|until|through)\s+.+)\b/.test(lower);
+          const parsedRange = parseDateRangeFromText(trimmed);
+          const rangeStart = (ep.date_range_start as string) || parsedRange.start;
+          const rangeEnd = (ep.date_range_end as string) || parsedRange.end;
           const leaveDate = (ep.leave_date as string | null) || parseDateFromText(trimmed);
 
           if (swapWorkerName && leaveDate) {
@@ -404,21 +787,69 @@ export function ChatPanel() {
               responseText = `⚠️ Could not find a worker named **"${swapWorkerName}"** in this SBU. Please check the name and try again.`;
             } else {
               const worker = workers[0];
-              // Look for a shift on that date for this worker
-              const shifts = await fetchShifts(sbuCode, departmentCode, leaveDate, leaveDate);
-              const workerShift = shifts.find(s => s.worker_name === worker.name);
-              const lr = await createLeaveRequest({
-                worker_id: worker.id,
-                shift_id: workerShift?.id,
-                date: leaveDate,
-                reason: trimmed,
-              });
-              responseText = buildAssistantResponse('swap', routing.routed_to, {
-                leaveId: lr.id,
-                workerName: worker.name,
-                leaveDate,
-              } as never);
-              queryClient.invalidateQueries({ queryKey: ['leave-requests'] });
+
+              if (hasRangeIntent) {
+                // Prefer shifts within requested range; for "this week" fallback to next week if no shifts exist.
+                let shifts = await fetchShifts(sbuCode, departmentCode, rangeStart, rangeEnd);
+                let workerShifts = shifts.filter(s => s.worker_id === worker.id);
+
+                if (workerShifts.length === 0 && lower.includes('this week')) {
+                  const rangeStart = new Date(parsedRange.start);
+                  const rangeEnd = new Date(parsedRange.end);
+                  rangeStart.setDate(rangeStart.getDate() + 7);
+                  rangeEnd.setDate(rangeEnd.getDate() + 7);
+                  const nextStart = rangeStart.toISOString().slice(0, 10);
+                  const nextEnd = rangeEnd.toISOString().slice(0, 10);
+                  shifts = await fetchShifts(sbuCode, departmentCode, nextStart, nextEnd);
+                  workerShifts = shifts.filter(s => s.worker_id === worker.id);
+                }
+
+                if (workerShifts.length === 0) {
+                  responseText =
+                    `⚠️ No scheduled shifts found for **${worker.name}** in the requested period, so no leave requests were created.`;
+                } else {
+                  const uniqueShifts = workerShifts.filter((s, idx, arr) =>
+                    arr.findIndex(x => x.id === s.id) === idx,
+                  );
+                  const created: { id: number; date: string; shift: string }[] = [];
+                  for (const ws of uniqueShifts) {
+                    const lr = await createLeaveRequest({
+                      worker_id: worker.id,
+                      shift_id: ws.id,
+                      date: ws.date,
+                      reason: trimmed,
+                    });
+                    created.push({ id: lr.id, date: ws.date, shift: ws.shift_type_name });
+                  }
+
+                  const lines = created
+                    .sort((a, b) => a.date.localeCompare(b.date))
+                    .map(c => `- **${c.date}** · ${c.shift} (ID #${c.id})`)
+                    .join('\n');
+
+                  responseText =
+                    `🔄 **${created.length} leave request(s) created for ${worker.name}.**\n\n` +
+                    `${lines}\n\n` +
+                    `Open **Swap Management** and click **Accept** on each row to execute.`;
+                  queryClient.invalidateQueries({ queryKey: ['leave-requests'] });
+                }
+              } else {
+                // Single-date leave request
+                const shifts = await fetchShifts(sbuCode, departmentCode, leaveDate, leaveDate);
+                const workerShift = shifts.find(s => s.worker_id === worker.id);
+                const lr = await createLeaveRequest({
+                  worker_id: worker.id,
+                  shift_id: workerShift?.id,
+                  date: leaveDate,
+                  reason: trimmed,
+                });
+                responseText = buildAssistantResponse('swap', routing.routed_to, {
+                  leaveId: lr.id,
+                  workerName: worker.name,
+                  leaveDate,
+                } as never);
+                queryClient.invalidateQueries({ queryKey: ['leave-requests'] });
+              }
             }
           } else {
             responseText = `⚠️ I detected a swap/leave request but could not identify the worker name or date. Please be more specific, e.g. "Amara Perera is on leave on 5th May".`;
@@ -431,16 +862,45 @@ export function ChatPanel() {
           const { start: regexStart, end: regexEnd } = parseDateRangeFromText(trimmed);
           const qStart = (ep.date_range_start as string) || regexStart;
           const qEnd   = (ep.date_range_end   as string) || regexEnd;
-          const shifts = await fetchShifts(sbuCode, departmentCode, qStart, qEnd);
-          if (shifts.length === 0) {
-            responseText = `📋 No shifts found for **${qStart}**${qStart !== qEnd ? ` – **${qEnd}**` : ''} in this department.`;
+
+          // Resolve worker filter from LLM extraction or regex fallback
+          const llmQueryWorker = ep.worker_name as string | null;
+          const queryWorkerName = (llmQueryWorker && !ROLE_KEYWORDS.has(llmQueryWorker.toLowerCase()))
+            ? llmQueryWorker
+            : extractWorkerName(trimmed);
+
+          let allShifts = await fetchShifts(sbuCode, departmentCode, qStart, qEnd);
+
+          // Filter by worker if the query is about a specific person
+          if (queryWorkerName) {
+            const needle = queryWorkerName.toLowerCase();
+            allShifts = allShifts.filter(s => s.worker_name?.toLowerCase().includes(needle));
+          }
+
+          if (allShifts.length === 0) {
+            try {
+              const llm = await generateQueryResponse({
+                message: trimmed,
+                sbu_code: sbuCode,
+                department_code: departmentCode,
+                date_range_start: qStart,
+                date_range_end: qEnd,
+                shift_count: 0,
+              });
+              responseText = llm.response;
+            } catch {
+              responseText = queryWorkerName
+                ? `📋 No shifts found for **${queryWorkerName}** in this period.`
+                : `📋 No shifts found for **${qStart}**${qStart !== qEnd ? ` – **${qEnd}**` : ''} in this department.`;
+            }
           } else {
-            const lines = shifts.map(s =>
-              `- **${s.shift_type_name}** (${s.start_time.slice(0, 5)}–${s.end_time.slice(0, 5)}): ${s.worker_name || '—'} \`[${s.status}]\``
+            const header = queryWorkerName
+              ? `📋 **Shifts for ${queryWorkerName}${qStart !== qEnd ? ` (${qStart} – ${qEnd})` : ` on ${qStart}`}:**`
+              : `📋 **Shifts for ${qStart}${qStart !== qEnd ? ` – ${qEnd}` : ''}:**`;
+            const lines = allShifts.map(s =>
+              `- **${s.date} · ${s.shift_type_name}** (${s.start_time.slice(0, 5)}–${s.end_time.slice(0, 5)}) \`[${s.status}]\``
             );
-            responseText =
-              `📋 **Shifts for ${qStart}${qStart !== qEnd ? ` – ${qEnd}` : ''}:**\n\n` +
-              lines.join('\n');
+            responseText = `${header}\n\n${lines.join('\n')}`;
           }
 
         } else {
