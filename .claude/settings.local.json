@@ -21,7 +21,9 @@
       "Bash(docker version:*)",
       "Bash(pip install:*)",
       "Bash(python -c \"import json,sys; data=json.load\\(sys.stdin\\); [print\\(f'{e[\\\\\"name\\\\\"]} -> {e[\\\\\"employee_type\\\\\"]}'\\) for e in data[:8]]\")",
-      "Bash(python -c \"import json,sys; data=json.load\\(sys.stdin\\); [print\\(f'{e[\\\\\"name\\\\\"]} -> {e[\\\\\"employee_type\\\\\"]}'\\) for e in data]\")"
+      "Bash(python -c \"import json,sys; data=json.load\\(sys.stdin\\); [print\\(f'{e[\\\\\"name\\\\\"]} -> {e[\\\\\"employee_type\\\\\"]}'\\) for e in data]\")",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(f'{w[\\\\\"name\\\\\"]} | used={w[\\\\\"weekly_hours_used\\\\\"]}h remaining={w[\\\\\"hours_remaining\\\\\"]}h'\\) for w in d[:4]]\")",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(f'{len\\(d\\)} workers, first: {d[0][\\\\\"name\\\\\"]} remaining={d[0][\\\\\"hours_remaining\\\\\"]}h'\\)\")"
     ]
   }
 }

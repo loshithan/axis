@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeftRight, AlertTriangle, CheckCircle, Loader2, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
+import { ArrowLeftRight, AlertTriangle, CheckCircle, Loader2, ChevronDown, ChevronUp, RefreshCw, Clock } from 'lucide-react';
+import { OTPanel } from './OTPanel';
 import Swal from 'sweetalert2';
 import { useAxis } from '@/context/AxisContext';
 import {
@@ -194,7 +195,7 @@ function EscalationCard({ item }: { item: EscalationItem }) {
   );
 }
 
-type Tab = 'leave' | 'escalations';
+type Tab = 'leave' | 'escalations' | 'ot';
 
 export function SwapPanel() {
   const [tab, setTab] = useState<Tab>('leave');
@@ -235,23 +236,27 @@ export function SwapPanel() {
 
       {/* Tabs */}
       <div className="flex border-b border-border px-5">
-        {(['leave', 'escalations'] as Tab[]).map((t) => (
+        {([
+          { key: 'leave',       label: 'Leave Requests' },
+          { key: 'escalations', label: 'Escalations'    },
+          { key: 'ot',          label: 'OT Management'  },
+        ] as { key: Tab; label: string }[]).map(({ key, label }) => (
           <button
-            key={t}
-            onClick={() => setTab(t)}
+            key={key}
+            onClick={() => setTab(key)}
             className={`py-2.5 px-1 mr-5 text-sm font-medium border-b-2 transition-colors ${
-              tab === t
+              tab === key
                 ? 'border-primary text-primary'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
             }`}
           >
-            {t === 'leave' ? 'Leave Requests' : 'Escalations'}
-            {t === 'leave' && leaveRequests.length > 0 && (
+            {label}
+            {key === 'leave' && leaveRequests.length > 0 && (
               <span className="ml-1.5 text-xs bg-primary/20 text-primary px-1.5 py-0.5 rounded-full">
                 {leaveRequests.length}
               </span>
             )}
-            {t === 'escalations' && escalations.length > 0 && (
+            {key === 'escalations' && escalations.length > 0 && (
               <span className="ml-1.5 text-xs bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded-full">
                 {escalations.length}
               </span>
@@ -262,7 +267,9 @@ export function SwapPanel() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {!sbuCode || !departmentCode ? (
+        {tab === 'ot' ? (
+          <OTPanel />
+        ) : !sbuCode || !departmentCode ? (
           <p className="text-sm text-muted-foreground text-center mt-8">
             Select an SBU and department to view swaps.
           </p>

@@ -21,6 +21,10 @@ from app.models.models import (
     EscalationStatus,
     LeaveRequest,
     LeaveStatus,
+    OTApplication,
+    OTApplicationStatus,
+    OTRequest,
+    OTRequestStatus,
     SBU,
     Shift,
     ShiftStatus,
@@ -892,6 +896,377 @@ async def orchestrator_process_message(message: str, sbu_code: str, session_id: 
     }
 
 
+async def get_worker_weekly_stats(
+    session: AsyncSession,
+    worker_id: int,
+    max_weekly_hours: float,
+    for_date: Optional[date] = None,
+) -> dict:
+    """Returns weekly_hours_used and ot_hours for a worker for the current (or given) week."""
+    from datetime import date as date_type
+    d = for_date or date_type.today()
+    week_start, week_end = _week_range(d)
+    used = await _weekly_hours_used(session, worker_id, week_start, week_end)
+    ot = max(0.0, used - max_weekly_hours)
+    return {
+        "weekly_hours_used": round(used, 1),
+        "ot_hours": round(ot, 1),
+    }
+
+
+async def create_ot_request_impl(
+    session: AsyncSession,
+    shift_id: int,
+    escalation_id: Optional[int] = None,
+    leave_request_id: Optional[int] = None,
+) -> OTRequest:
+    ot = OTRequest(
+        shift_id=shift_id,
+        escalation_id=escalation_id,
+        leave_request_id=leave_request_id,
+        status=OTRequestStatus.OPEN,
+    )
+    session.add(ot)
+    await session.flush()
+    return ot
+
+
+async def get_ot_workers_impl(
+    session: AsyncSession,
+    sbu_code: str,
+    department_code: str,
+    shift_date: date,
+) -> list[dict]:
+    _, dept = await _load_department_sbu(session, sbu_code, department_code)
+    week_start, week_end = _week_range(shift_date)
+    stmt = select(Worker).where(Worker.department_id == dept.id, Worker.is_active.is_(True))
+    workers = list((await session.execute(stmt)).scalars().all())
+    result = []
+    for w in workers:
+        used = await _weekly_hours_used(session, w.id, week_start, week_end)
+        max_h = float(w.max_weekly_hours or 40)
+        result.append({
+            "id": w.id,
+            "employee_id": w.employee_id,
+            "name": w.name,
+            "employee_type": w.employee_type or "nurse",
+            "certifications": list(w.certifications or []),
+            "weekly_hours_used": round(used, 1),
+            "max_weekly_hours": max_h,
+            "hours_remaining": round(max_h - used, 1),
+        })
+    result.sort(key=lambda x: x["hours_remaining"], reverse=True)
+    return result
+
+
+async def list_ot_requests_impl(
+    session: AsyncSession,
+    sbu_code: str,
+    department_code: str,
+    status_filter: str = "open",
+) -> list[dict]:
+    stmt = (
+        select(OTRequest)
+        .options(
+            selectinload(OTRequest.shift).selectinload(Shift.shift_type),
+            selectinload(OTRequest.assigned_worker),
+            selectinload(OTRequest.applications),
+        )
+        .join(Shift, Shift.id == OTRequest.shift_id)
+        .join(ShiftType, ShiftType.id == Shift.shift_type_id)
+        .join(SBU, SBU.id == ShiftType.sbu_id)
+        .where(SBU.code == sbu_code, ShiftType.department_code == department_code)
+        .order_by(OTRequest.created_at.desc())
+    )
+    if status_filter != "all":
+        try:
+            stmt = stmt.where(OTRequest.status == OTRequestStatus(status_filter))
+        except ValueError:
+            pass
+    rows = (await session.execute(stmt)).scalars().all()
+    result = []
+    for r in rows:
+        sh = r.shift
+        st = sh.shift_type if sh else None
+        result.append({
+            "id": r.id,
+            "shift_id": r.shift_id,
+            "shift_type_name": st.name if st else None,
+            "date": sh.date.isoformat() if sh else "",
+            "start_time": sh.start_time.isoformat(timespec="seconds") if sh else "",
+            "end_time": sh.end_time.isoformat(timespec="seconds") if sh else "",
+            "department_code": st.department_code if st else "",
+            "status": r.status.value if hasattr(r.status, "value") else str(r.status),
+            "leave_request_id": r.leave_request_id,
+            "escalation_id": r.escalation_id,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "assigned_worker_id": r.assigned_worker_id,
+            "assigned_worker_name": r.assigned_worker.name if r.assigned_worker else None,
+            "application_count": len([a for a in r.applications if a.status == OTApplicationStatus.PENDING]),
+        })
+    return result
+
+
+async def list_ot_applications_impl(
+    session: AsyncSession,
+    ot_request_id: int,
+) -> list[dict]:
+    ot_req = (
+        await session.execute(
+            select(OTRequest)
+            .options(selectinload(OTRequest.shift).selectinload(Shift.shift_type))
+            .where(OTRequest.id == ot_request_id)
+        )
+    ).scalar_one_or_none()
+    if not ot_req or not ot_req.shift:
+        return []
+
+    shift_date = ot_req.shift.date
+    week_start, week_end = _week_range(shift_date)
+
+    stmt = (
+        select(OTApplication)
+        .options(selectinload(OTApplication.worker))
+        .where(OTApplication.ot_request_id == ot_request_id)
+        .order_by(OTApplication.applied_at.asc())
+    )
+    apps = (await session.execute(stmt)).scalars().all()
+    result = []
+    for a in apps:
+        w = a.worker
+        used = await _weekly_hours_used(session, w.id, week_start, week_end)
+        result.append({
+            "id": a.id,
+            "ot_request_id": a.ot_request_id,
+            "worker_id": a.worker_id,
+            "worker_name": w.name,
+            "employee_id": w.employee_id,
+            "weekly_hours_used": round(used, 1),
+            "max_weekly_hours": float(w.max_weekly_hours or 40),
+            "status": a.status.value if hasattr(a.status, "value") else str(a.status),
+            "applied_at": a.applied_at.isoformat() if a.applied_at else None,
+            "notified_at": a.notified_at.isoformat() if a.notified_at else None,
+            "email_sent": a.email_sent,
+        })
+    return result
+
+
+async def notify_ot_workers_impl(
+    session: AsyncSession,
+    ot_request_id: int,
+    worker_ids: list[int],
+) -> dict:
+    ot_req = (
+        await session.execute(
+            select(OTRequest)
+            .options(selectinload(OTRequest.shift).selectinload(Shift.shift_type))
+            .where(OTRequest.id == ot_request_id)
+        )
+    ).scalar_one_or_none()
+    if not ot_req:
+        raise ValueError(f"OT request {ot_request_id} not found")
+
+    sh = ot_req.shift
+    st = sh.shift_type if sh else None
+    notifications = []
+
+    for wid in worker_ids:
+        # Upsert application row
+        existing = (
+            await session.execute(
+                select(OTApplication).where(
+                    OTApplication.ot_request_id == ot_request_id,
+                    OTApplication.worker_id == wid,
+                )
+            )
+        ).scalar_one_or_none()
+        if not existing:
+            app = OTApplication(
+                ot_request_id=ot_request_id,
+                worker_id=wid,
+                status=OTApplicationStatus.PENDING,
+                notified_at=datetime.utcnow(),
+            )
+            session.add(app)
+        else:
+            existing.notified_at = datetime.utcnow()
+
+        subject = f"OT Opportunity: {st.name if st else 'Shift'} on {sh.date if sh else ''}"
+        message = (
+            f"An overtime shift is available and you have been selected as a candidate.\n\n"
+            f"  Shift: {st.name if st else 'N/A'}\n"
+            f"  Date:  {sh.date if sh else 'N/A'}\n"
+            f"  Time:  {sh.start_time} – {sh.end_time}\n\n"
+            f"Please notify your manager or apply via the AXIS system.\n\n— AXIS Workforce AI"
+        )
+        try:
+            email_sent, _, wname = await notify_worker_impl(session, wid, "ot_opportunity", subject, message, sh.id if sh else None)
+        except Exception:
+            email_sent, wname = False, f"Worker #{wid}"
+
+        # Update email_sent flag
+        app_row = (
+            await session.execute(
+                select(OTApplication).where(
+                    OTApplication.ot_request_id == ot_request_id,
+                    OTApplication.worker_id == wid,
+                )
+            )
+        ).scalar_one_or_none()
+        if app_row:
+            app_row.email_sent = email_sent
+
+        notifications.append({"worker_id": wid, "worker_name": wname, "email_sent": email_sent})
+
+    ot_req.status = OTRequestStatus.NOTIFIED
+    await session.flush()
+
+    return {
+        "ot_request_id": ot_request_id,
+        "workers_notified": len(worker_ids),
+        "notifications": notifications,
+    }
+
+
+async def apply_for_ot_impl(
+    session: AsyncSession,
+    ot_request_id: int,
+    worker_id: int,
+) -> dict:
+    existing = (
+        await session.execute(
+            select(OTApplication).where(
+                OTApplication.ot_request_id == ot_request_id,
+                OTApplication.worker_id == worker_id,
+            )
+        )
+    ).scalar_one_or_none()
+
+    now = datetime.utcnow()
+    if not existing:
+        app = OTApplication(
+            ot_request_id=ot_request_id,
+            worker_id=worker_id,
+            status=OTApplicationStatus.PENDING,
+            applied_at=now,
+        )
+        session.add(app)
+        await session.flush()
+        app_id = app.id
+        applied_at = now
+    elif existing.status != OTApplicationStatus.PENDING:
+        raise ValueError(f"Application already {existing.status.value}")
+    else:
+        app_id = existing.id
+        applied_at = existing.applied_at
+
+    # Compute queue position (how many applied before this one)
+    pos_stmt = select(func.count(OTApplication.id)).where(
+        OTApplication.ot_request_id == ot_request_id,
+        OTApplication.status == OTApplicationStatus.PENDING,
+        OTApplication.applied_at < applied_at,
+    )
+    position = int((await session.execute(pos_stmt)).scalar() or 0) + 1
+
+    return {
+        "application_id": app_id,
+        "worker_id": worker_id,
+        "ot_request_id": ot_request_id,
+        "applied_at": applied_at.isoformat(),
+        "queue_position": position,
+    }
+
+
+async def assign_first_ot_applicant_impl(
+    session: AsyncSession,
+    ot_request_id: int,
+) -> dict:
+    ot_req = (
+        await session.execute(
+            select(OTRequest)
+            .options(
+                selectinload(OTRequest.shift).selectinload(Shift.shift_type),
+                selectinload(OTRequest.applications).selectinload(OTApplication.worker),
+            )
+            .where(OTRequest.id == ot_request_id)
+        )
+    ).scalar_one_or_none()
+    if not ot_req:
+        raise ValueError(f"OT request {ot_request_id} not found")
+
+    # Get first pending applicant (FIFO)
+    first = next(
+        (a for a in sorted(ot_req.applications, key=lambda x: x.applied_at)
+         if a.status == OTApplicationStatus.PENDING),
+        None,
+    )
+    if not first:
+        raise ValueError("No pending applicants for this OT request")
+
+    sh = ot_req.shift
+    st = sh.shift_type if sh else None
+    winner = first.worker
+
+    # Validate (don't block — just capture result)
+    try:
+        vr = await validate_schedule_impl(session, winner.id, sh.shift_type_id, sh.date,
+                                          sh.start_time, sh.end_time)
+        validation_passed = vr.is_valid
+    except Exception:
+        validation_passed = False
+
+    now = datetime.utcnow()
+
+    # Assign the shift
+    sh.worker_id = winner.id
+    sh.status = ShiftStatus.CONFIRMED
+
+    # Update OT request
+    ot_req.status = OTRequestStatus.ASSIGNED
+    ot_req.assigned_worker_id = winner.id
+    ot_req.assigned_at = now
+
+    # Update winner application
+    first.status = OTApplicationStatus.ASSIGNED
+    first.resolved_at = now
+
+    # Reject all other pending applications
+    rejected_count = 0
+    for app in ot_req.applications:
+        if app.id != first.id and app.status == OTApplicationStatus.PENDING:
+            app.status = OTApplicationStatus.REJECTED
+            app.resolved_at = now
+            rejected_count += 1
+
+    await session.flush()
+
+    # Notify the winner
+    try:
+        email_sent, _, _ = await notify_worker_impl(
+            session, winner.id, "ot_assigned",
+            f"OT Shift Assigned: {st.name if st else 'Shift'} on {sh.date}",
+            (
+                f"Congratulations! You have been assigned the following OT shift:\n\n"
+                f"  Shift: {st.name if st else 'N/A'}\n"
+                f"  Date:  {sh.date}\n"
+                f"  Time:  {sh.start_time} – {sh.end_time}\n\n— AXIS Workforce AI"
+            ),
+            sh.id,
+        )
+    except Exception:
+        email_sent = False
+
+    return {
+        "ot_request_id": ot_request_id,
+        "shift_id": sh.id,
+        "assigned_worker_id": winner.id,
+        "assigned_worker_name": winner.name,
+        "rejected_count": rejected_count,
+        "email_sent": email_sent,
+        "validation_passed": validation_passed,
+    }
+
+
 async def resolve_leave_request_impl(
     session: AsyncSession, leave_request_id: int
 ) -> dict[str, Any]:
@@ -980,5 +1355,12 @@ async def resolve_leave_request_impl(
             attempted_candidates=attempted,
         ),
     )
-    lr.resolution_summary = "No replacement found — shift converted to open, escalated to manager."
-    return {"status": "escalated", "escalation_id": esc.escalation_id}
+    # Auto-create an OT request so the manager can advertise this shift for overtime
+    ot_req = await create_ot_request_impl(
+        session,
+        shift_id=sh.id,
+        escalation_id=esc.escalation_id,
+        leave_request_id=leave_request_id,
+    )
+    lr.resolution_summary = "No replacement found — shift converted to open, OT request created, escalated to manager."
+    return {"status": "escalated", "escalation_id": esc.escalation_id, "ot_request_id": ot_req.id}

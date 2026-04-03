@@ -245,3 +245,86 @@ class UpdateShiftRequest(BaseModel):
     start_time: Optional[time] = None
     end_time: Optional[time] = None
     status: Optional[str] = None
+
+
+# ── OT Management ──
+
+class OTRequestItem(BaseModel):
+    id: int
+    shift_id: int
+    shift_type_name: Optional[str] = None
+    date: date
+    start_time: time
+    end_time: time
+    department_code: str
+    status: str
+    leave_request_id: Optional[int] = None
+    escalation_id: Optional[int] = None
+    created_at: datetime
+    assigned_worker_id: Optional[int] = None
+    assigned_worker_name: Optional[str] = None
+    application_count: int = 0
+
+
+class OTApplicationItem(BaseModel):
+    id: int
+    ot_request_id: int
+    worker_id: int
+    worker_name: str
+    employee_id: str
+    weekly_hours_used: float
+    max_weekly_hours: float
+    status: str
+    applied_at: datetime
+    notified_at: Optional[datetime] = None
+    email_sent: bool = False
+
+
+class OTWorkerItem(BaseModel):
+    id: int
+    employee_id: str
+    name: str
+    employee_type: str
+    certifications: list[str] = []
+    weekly_hours_used: float
+    max_weekly_hours: float
+    hours_remaining: float
+
+
+class NotifyOTRequest(BaseModel):
+    ot_request_id: int
+    worker_ids: list[int]
+
+
+class NotifyOTResult(BaseModel):
+    worker_id: int
+    worker_name: str
+    email_sent: bool
+
+
+class NotifyOTResponse(BaseModel):
+    ot_request_id: int
+    workers_notified: int
+    notifications: list[NotifyOTResult]
+
+
+class ApplyOTRequest(BaseModel):
+    worker_id: int
+
+
+class ApplyOTResponse(BaseModel):
+    application_id: int
+    worker_id: int
+    ot_request_id: int
+    applied_at: datetime
+    queue_position: int
+
+
+class AssignOTResponse(BaseModel):
+    ot_request_id: int
+    shift_id: int
+    assigned_worker_id: int
+    assigned_worker_name: str
+    rejected_count: int
+    email_sent: bool
+    validation_passed: bool

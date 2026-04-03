@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import get_db
-from app.models.models import Department, Escalation, EscalationStatus, LeaveRequest, LeaveStatus, SBU, Shift, ShiftStatus, ShiftType, Worker
+from app.models.models import Department, Escalation, EscalationStatus, LeaveRequest, LeaveStatus, OTApplication, OTApplicationStatus, OTRequest, OTRequestStatus, SBU, Shift, ShiftStatus, ShiftType, Worker
 from app.schemas.schemas import (
     GetAvailableStaffRequest,
     GetAvailableStaffResponse,
@@ -41,6 +41,11 @@ from app.schemas.schemas import (
     ShiftTypeItem,
     ManualCreateShiftRequest,
     UpdateShiftRequest,
+    NotifyOTRequest,
+    NotifyOTResponse,
+    ApplyOTRequest,
+    ApplyOTResponse,
+    AssignOTResponse,
 )
 from app.services.axis_service import (
     create_shift_impl,
@@ -54,6 +59,13 @@ from app.services.axis_service import (
     orchestrator_process_message,
     resolve_leave_request_impl,
     validate_schedule_impl,
+    get_ot_workers_impl,
+    list_ot_requests_impl,
+    list_ot_applications_impl,
+    notify_ot_workers_impl,
+    apply_for_ot_impl,
+    assign_first_ot_applicant_impl,
+    get_worker_weekly_stats,
 )
 
 
@@ -362,8 +374,10 @@ async def list_all_employees(
     if sbu_code:
         stmt = stmt.where(SBU.code == sbu_code)
     rows = (await session.execute(stmt)).scalars().all()
-    return [
-        {
+    result = []
+    for r in rows:
+        stats = await get_worker_weekly_stats(session, r.id, r.max_weekly_hours or 40)
+        result.append({
             "id": r.id,
             "employee_id": r.employee_id,
             "name": r.name,
@@ -376,11 +390,12 @@ async def list_all_employees(
             "sbu_name": r.department.sbu.name if r.department and r.department.sbu else "",
             "certifications": list(r.certifications or []),
             "max_weekly_hours": r.max_weekly_hours,
+            "weekly_hours_used": stats["weekly_hours_used"],
+            "ot_hours": stats["ot_hours"],
             "is_active": r.is_active,
             "created_at": r.created_at.isoformat() if r.created_at else None,
-        }
-        for r in rows
-    ]
+        })
+    return result
 
 
 @app.get("/meta/workers/search")
@@ -664,6 +679,76 @@ async def resolve_leave(
         return await resolve_leave_request_impl(session, body.leave_request_id)
     except ValueError as e:
         raise _http_from_value(e) from e
+
+
+# ── OT Management ──
+
+@app.get("/ot/workers")
+async def get_ot_workers(
+    sbu_code: str,
+    department_code: str,
+    shift_date: date,
+    session: AsyncSession = Depends(get_db),
+):
+    return await get_ot_workers_impl(session, sbu_code, department_code, shift_date)
+
+
+@app.get("/ot/requests")
+async def list_ot_requests(
+    sbu_code: str,
+    department_code: str,
+    status: str = "open",
+    session: AsyncSession = Depends(get_db),
+):
+    return await list_ot_requests_impl(session, sbu_code, department_code, status)
+
+
+@app.get("/ot/requests/{ot_request_id}/applications")
+async def list_ot_applications(
+    ot_request_id: int,
+    session: AsyncSession = Depends(get_db),
+):
+    return await list_ot_applications_impl(session, ot_request_id)
+
+
+@app.post("/ot/notify", response_model=NotifyOTResponse)
+async def notify_ot(
+    body: NotifyOTRequest,
+    session: AsyncSession = Depends(get_db),
+):
+    try:
+        result = await notify_ot_workers_impl(session, body.ot_request_id, body.worker_ids)
+        await session.commit()
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/ot/applications/{ot_request_id}/apply", response_model=ApplyOTResponse)
+async def apply_ot(
+    ot_request_id: int,
+    body: ApplyOTRequest,
+    session: AsyncSession = Depends(get_db),
+):
+    try:
+        result = await apply_for_ot_impl(session, ot_request_id, body.worker_id)
+        await session.commit()
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/ot/requests/{ot_request_id}/assign-first", response_model=AssignOTResponse)
+async def assign_first_ot(
+    ot_request_id: int,
+    session: AsyncSession = Depends(get_db),
+):
+    try:
+        result = await assign_first_ot_applicant_impl(session, ot_request_id)
+        await session.commit()
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
 
 if __name__ == "__main__":
