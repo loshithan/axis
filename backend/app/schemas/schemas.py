@@ -27,6 +27,7 @@ class GetAvailableStaffRequest(BaseModel):
     date: date
     shift_type_id: int
     required_certifications: list[str] = []
+    required_employee_type: Optional[str] = None
 
 
 class GetAvailableStaffResponse(BaseModel):
@@ -189,6 +190,19 @@ class OrchestratorOutput(BaseModel):
     sbu_config_loaded: bool
 
 
+class QueryAssistantRequest(BaseModel):
+    message: str
+    sbu_code: str
+    department_code: str
+    date_range_start: date
+    date_range_end: date
+    shift_count: int = 0
+
+
+class QueryAssistantResponse(BaseModel):
+    response: str
+
+
 class ResolveSwapRequest(BaseModel):
     leave_request_id: int
 
@@ -210,6 +224,7 @@ class ShiftListItem(BaseModel):
     start_time: time
     end_time: time
     status: str
+    required_employee_type: Optional[str] = None
 
 
 class DepartmentItem(BaseModel):
@@ -235,6 +250,7 @@ class ManualCreateShiftRequest(BaseModel):
     start_time: time
     end_time: time
     status: str = "confirmed"
+    required_employee_type: Optional[str] = None
 
 
 class UpdateShiftRequest(BaseModel):
@@ -245,6 +261,7 @@ class UpdateShiftRequest(BaseModel):
     start_time: Optional[time] = None
     end_time: Optional[time] = None
     status: Optional[str] = None
+    required_employee_type: Optional[str] = None
 
 
 # ── OT Management ──
@@ -264,6 +281,7 @@ class OTRequestItem(BaseModel):
     assigned_worker_id: Optional[int] = None
     assigned_worker_name: Optional[str] = None
     application_count: int = 0
+    required_employee_type: Optional[str] = None
 
 
 class OTApplicationItem(BaseModel):
@@ -309,6 +327,10 @@ class NotifyOTResponse(BaseModel):
 
 
 class ApplyOTRequest(BaseModel):
+    worker_id: int
+
+
+class AssignOTRequest(BaseModel):
     worker_id: int
 
 

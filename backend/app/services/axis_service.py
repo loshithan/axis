@@ -57,6 +57,32 @@ from app.schemas.schemas import (
 logger = logging.getLogger("axis.service")
 
 
+def _is_scheduling_domain_message(message: str) -> bool:
+    """Allow only AXIS workforce scheduling domain queries."""
+    m = (message or "").lower()
+    domain_terms = (
+        "shift",
+        "schedule",
+        "roster",
+        "worker",
+        "staff",
+        "nurse",
+        "doctor",
+        "department",
+        "availability",
+        "leave",
+        "swap",
+        "coverage",
+        "ot",
+        "overtime",
+        "escalation",
+        "compliance",
+        "fairness",
+        "employee",
+    )
+    return any(term in m for term in domain_terms)
+
+
 def _ensure_repo_on_path() -> None:
     """Add repo root (contains `agents` + `configs`) to sys.path for Docker and local layouts."""
     p = Path(__file__).resolve().parent
@@ -345,6 +371,8 @@ async def get_available_staff_impl(
         Worker.department_id == dept.id,
         Worker.is_active.is_(True),
     )
+    if req.required_employee_type:
+        stmt = stmt.where(Worker.employee_type == req.required_employee_type)
     workers = list((await session.execute(stmt)).scalars().all())
 
     candidates: list[WorkerSummary] = []
@@ -356,19 +384,27 @@ async def get_available_staff_impl(
         wc = list(w.certifications or [])
         if req_certs and not all(c in wc for c in req_certs):
             continue
+        leave_in_week = await _leave_dates_in_range(session, w.id, week_start, week_end)
+        # Business rule: if a worker has approved/pending leave in the roster week,
+        # don't auto-assign them to cover other workers in that week.
+        if leave_in_week:
+            continue
         leave_on_day = await _leave_dates_in_range(session, w.id, req.date, req.date)
         if req.date in leave_on_day:
             continue
         avail = await _availability_rows(session, w.id, req.date, req.date)
-        has_slot = any(
-            slot["date"] == req.date
-            and slot["start_time"] <= shift_type.start_time
-            and slot["end_time"] >= shift_type.end_time
-            and slot["is_available"]
-            for slot in avail
-        )
-        if not has_slot:
-            continue
+        # If the worker has no availability rows at all, treat them as fully available.
+        # Only block them if they have an explicit unavailability entry for this slot.
+        if avail:
+            has_slot = any(
+                slot["date"] == req.date
+                and slot["start_time"] <= shift_type.start_time
+                and slot["end_time"] >= shift_type.end_time
+                and slot["is_available"]
+                for slot in avail
+            )
+            if not has_slot:
+                continue
 
         weekly = await _weekly_hours_used(session, w.id, week_start, week_end)
         consec = await _shifts_count_in_week(session, w.id, week_start, week_end)
@@ -486,12 +522,14 @@ async def find_swap_candidates_impl(
     st = sh.shift_type
     sbu = st.sbu
     dept_code = st.department_code
+    req_emp_type = (sh.reasoning_trace or {}).get("required_employee_type") if isinstance(sh.reasoning_trace, dict) else None
     greq = GetAvailableStaffRequest(
         sbu_code=sbu.code,
         department_code=dept_code,
         date=sh.date,
         shift_type_id=st.id,
         required_certifications=list(st.required_certifications or []),
+        required_employee_type=req_emp_type,
     )
     staff = await get_available_staff_impl(
         session, greq, exclude_worker_ids={sh.worker_id}
@@ -708,8 +746,185 @@ async def generate_schedule_impl(
     slots_out: list[ScheduleSlotResult] = []
     filled = 0
     escalated = 0
+    constraints = req.constraints or {}
+    open_only = bool(constraints.get("open_only"))
+
+    if open_only:
+        open_stmt = (
+            select(Shift)
+            .options(selectinload(Shift.shift_type))
+            .join(ShiftType, ShiftType.id == Shift.shift_type_id)
+            .where(
+                ShiftType.sbu_id == sbu.id,
+                ShiftType.department_code == req.department_code,
+                Shift.date >= req.date_range_start,
+                Shift.date <= req.date_range_end,
+                Shift.status == ShiftStatus.OPEN,
+            )
+            .order_by(Shift.date.asc(), Shift.start_time.asc())
+        )
+        if req.shift_type_ids:
+            open_stmt = open_stmt.where(Shift.shift_type_id.in_(req.shift_type_ids))
+
+        start_time_raw = constraints.get("start_time")
+        end_time_raw = constraints.get("end_time")
+        if start_time_raw:
+            try:
+                open_stmt = open_stmt.where(Shift.start_time >= time.fromisoformat(str(start_time_raw)))
+            except ValueError:
+                pass
+        if end_time_raw:
+            try:
+                open_stmt = open_stmt.where(Shift.end_time <= time.fromisoformat(str(end_time_raw)))
+            except ValueError:
+                pass
+
+        open_shifts = list((await session.execute(open_stmt)).scalars().all())
+
+        today = date.today()
+        open_shifts.sort(key=lambda sh: (0 if sh.date >= today else 1, sh.date, sh.start_time))
+
+        for sh in open_shifts:
+            st = sh.shift_type
+            d = sh.date
+            assigned_name: Optional[str] = None
+            status_slot = "pending"
+            explanation = ""
+
+            greq = GetAvailableStaffRequest(
+                sbu_code=req.sbu_code,
+                department_code=req.department_code,
+                date=d,
+                shift_type_id=st.id,
+            )
+            existing = await session.execute(
+                select(Shift.worker_id).where(
+                    Shift.shift_type_id == st.id,
+                    Shift.date == d,
+                    Shift.status.in_([ShiftStatus.PROPOSED, ShiftStatus.CONFIRMED]),
+                )
+            )
+            exclude = set(existing.scalars().all())
+            staff = await get_available_staff_impl(session, greq, exclude_worker_ids=exclude)
+
+            attempted: list[dict] = []
+            placed = False
+            for cand in staff.candidates:
+                vr = await validate_schedule_impl(
+                    session,
+                    cand.id,
+                    st.id,
+                    d,
+                    slot_start=sh.start_time,
+                    slot_end=sh.end_time,
+                )
+                if not vr.is_valid:
+                    attempted.append({"worker_id": cand.id, "reason": vr.reason})
+                    continue
+
+                sh.worker_id = cand.id
+                sh.status = ShiftStatus.PROPOSED
+                sh.explanation = f"Assigned existing open shift via scheduler (fairness {cand.fairness_score})"
+                await session.flush()
+
+                await explain_decision_impl(
+                    session,
+                    ExplainDecisionRequest(
+                        worker_id=cand.id,
+                        shift_id=sh.id,
+                        assignment_context={
+                            "slot": st.name,
+                            "date": d.isoformat(),
+                            "session_id": req.session_id,
+                            "mode": "open_only",
+                        },
+                        reasoning_trace=[
+                            {"step": "validate", "passed": True},
+                            {"step": "fairness_score", "value": cand.fairness_score},
+                        ],
+                    ),
+                )
+
+                assigned_name = cand.name
+                status_slot = "filled"
+                explanation = f"Assigned {cand.name}; existing open shift #{sh.id}"
+                filled += 1
+                placed = True
+
+                try:
+                    await notify_worker_impl(
+                        session,
+                        cand.id,
+                        "assignment",
+                        f"Shift Assignment: {st.name} on {d.isoformat()}",
+                        (
+                            f"Dear {cand.name},\n\n"
+                            f"You have been assigned to the following shift:\n\n"
+                            f"  Shift:      {st.name}\n"
+                            f"  Date:       {d.isoformat()}\n"
+                            f"  Time:       {sh.start_time} - {sh.end_time}\n"
+                            f"  Shift ID:   #{sh.id}\n\n"
+                            f"Please confirm your attendance.\n\n"
+                            f"- AXIS Workforce AI"
+                        ),
+                        sh.id,
+                    )
+                except Exception as e:
+                    logger.warning("Shift assignment notify failed for worker %s: %s", cand.id, e)
+
+                break
+
+            if not placed:
+                await escalate_impl(
+                    session,
+                    EscalateToManagerRequest(
+                        shift_type_id=st.id,
+                        date=d,
+                        conflict_description=(
+                            f"No valid candidate for existing open shift {st.name} on {d.isoformat()}"
+                        ),
+                        agent_reasoning="Exhausted eligible workers; see attempted list.",
+                        attempted_candidates=attempted,
+                    ),
+                )
+                status_slot = "escalated"
+                explanation = "Open shift remains unassigned - escalated to manager."
+                escalated += 1
+
+            slots_out.append(
+                ScheduleSlotResult(
+                    date=d,
+                    shift_type=st.name,
+                    assigned_worker=assigned_name,
+                    status=status_slot,
+                    explanation=explanation,
+                )
+            )
+
+        total = len(slots_out)
+        return ScheduleResponse(
+            slots=slots_out,
+            total_slots=total,
+            filled=filled,
+            escalated=escalated,
+            reasoning_summary=(
+                f"Processed {total} existing open shifts: {filled} assigned, {escalated} escalated."
+            ),
+        )
+
+    # Prioritize the nearest upcoming dates first, then older dates in-range.
+    # This improves practical coverage/escalation outcomes for manager requests
+    # that span past + future dates.
+    all_dates: list[date] = []
     d = req.date_range_start
     while d <= req.date_range_end:
+        all_dates.append(d)
+        d += timedelta(days=1)
+
+    today = date.today()
+    date_order = [x for x in all_dates if x >= today] + [x for x in all_dates if x < today]
+
+    for d in date_order:
         for st in shift_types:
             for _ in range(req.headcount_per_shift):
                 assigned_name: Optional[str] = None
@@ -838,7 +1053,6 @@ async def generate_schedule_impl(
                         explanation=explanation,
                     )
                 )
-        d += timedelta(days=1)
 
     total = len(slots_out)
     return ScheduleResponse(
@@ -896,17 +1110,124 @@ async def orchestrator_process_message(message: str, sbu_code: str, session_id: 
     }
 
 
+async def generate_query_response_impl(
+    session: AsyncSession,
+    *,
+    message: str,
+    sbu_code: str,
+    department_code: str,
+    date_range_start: date,
+    date_range_end: date,
+    shift_count: int,
+) -> str:
+    """Generate a manager-facing response for query intent, using LLM when available."""
+    if not _is_scheduling_domain_message(message):
+        return (
+            "I can only answer AXIS scheduling and workforce operations questions "
+            "based on system and database data. "
+            "Please ask about shifts, staffing, availability, leave/swap, overtime, "
+            "or department schedules."
+        )
+
+    role_rows = (
+        await session.execute(
+            select(Worker.employee_type, func.count(Worker.id))
+            .join(Department, Department.id == Worker.department_id)
+            .join(SBU, SBU.id == Department.sbu_id)
+            .where(
+                SBU.code == sbu_code,
+                Department.code == department_code,
+                Worker.is_active.is_(True),
+            )
+            .group_by(Worker.employee_type)
+        )
+    ).all()
+    role_counts = {str(r[0] or "").lower(): int(r[1] or 0) for r in role_rows}
+    nurses = role_counts.get("nurse", 0)
+    doctors = role_counts.get("doctor", 0)
+
+    if os.getenv("DEEPSEEK_API_KEY"):
+        try:
+            from agents.deepseek import chat_completion
+
+            def _call() -> str:
+                return chat_completion(
+                    system=(
+                        "You are AXIS ShiftAI. You must answer only AXIS workforce scheduling queries. "
+                        "Never answer unrelated/general-life questions. "
+                        "Use only the data provided in the prompt (which comes from AXIS DB/system). "
+                        "Do not invent facts. If data is insufficient, explicitly say so. "
+                        "Use plain text only (no markdown). If no shifts are found, explain likely "
+                        "reasons and suggest one concrete AXIS command."
+                    ),
+                    user=(
+                        "Manager query context:\n"
+                        f"- Original message: {message}\n"
+                        f"- SBU: {sbu_code}\n"
+                        f"- Department: {department_code}\n"
+                        f"- Date range: {date_range_start.isoformat()} to {date_range_end.isoformat()}\n"
+                        f"- Matching shifts: {shift_count}\n"
+                        f"- Active nurses in department: {nurses}\n"
+                        f"- Active doctors in department: {doctors}\n\n"
+                        "Draft a direct answer for the manager."
+                    ),
+                    max_tokens=220,
+                    temperature=0.2,
+                )
+
+            text = await asyncio.to_thread(_call)
+            if text:
+                return text
+        except Exception as e:
+            logger.warning("DeepSeek query response failed: %s", e)
+
+    if shift_count <= 0:
+        return (
+            f"No shifts were found for {date_range_start.isoformat()} to {date_range_end.isoformat()} "
+            f"in {department_code}. Active staff in this department: {nurses} nurses and {doctors} doctors. "
+            "This usually means shifts have not been generated yet (or runtime shift data was reset). "
+            "Try: 'Generate shifts for this department for this week'."
+        )
+
+    return (
+        f"Found {shift_count} shift(s) for {date_range_start.isoformat()} to "
+        f"{date_range_end.isoformat()} in {department_code}."
+    )
+
+
 async def get_worker_weekly_stats(
     session: AsyncSession,
     worker_id: int,
     max_weekly_hours: float,
     for_date: Optional[date] = None,
+    fallback_to_next_assigned_week: bool = False,
 ) -> dict:
     """Returns weekly_hours_used and ot_hours for a worker for the current (or given) week."""
     from datetime import date as date_type
     d = for_date or date_type.today()
     week_start, week_end = _week_range(d)
     used = await _weekly_hours_used(session, worker_id, week_start, week_end)
+
+    # Employee Management can be viewed while planning future rosters.
+    # If current-week hours are zero, optionally anchor stats to the next assigned week.
+    if fallback_to_next_assigned_week and used <= 0:
+        next_shift_date = (
+            await session.execute(
+                select(Shift.date)
+                .where(
+                    Shift.worker_id == worker_id,
+                    Shift.date >= d,
+                    Shift.status.in_([ShiftStatus.PROPOSED, ShiftStatus.CONFIRMED]),
+                )
+                .order_by(Shift.date.asc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+        if next_shift_date:
+            week_start, week_end = _week_range(next_shift_date)
+            used = await _weekly_hours_used(session, worker_id, week_start, week_end)
+
     ot = max(0.0, used - max_weekly_hours)
     return {
         "weekly_hours_used": round(used, 1),
@@ -936,10 +1257,19 @@ async def get_ot_workers_impl(
     sbu_code: str,
     department_code: str,
     shift_date: date,
+    shift_id: Optional[int] = None,
 ) -> list[dict]:
     _, dept = await _load_department_sbu(session, sbu_code, department_code)
+    required_employee_type: Optional[str] = None
+    if shift_id:
+        sh = (await session.execute(select(Shift).where(Shift.id == shift_id))).scalar_one_or_none()
+        if sh and isinstance(sh.reasoning_trace, dict):
+            required_employee_type = sh.reasoning_trace.get("required_employee_type")
+
     week_start, week_end = _week_range(shift_date)
     stmt = select(Worker).where(Worker.department_id == dept.id, Worker.is_active.is_(True))
+    if required_employee_type:
+        stmt = stmt.where(Worker.employee_type == required_employee_type)
     workers = list((await session.execute(stmt)).scalars().all())
     result = []
     for w in workers:
@@ -954,6 +1284,7 @@ async def get_ot_workers_impl(
             "weekly_hours_used": round(used, 1),
             "max_weekly_hours": max_h,
             "hours_remaining": round(max_h - used, 1),
+            "required_employee_type": required_employee_type,
         })
     result.sort(key=lambda x: x["hours_remaining"], reverse=True)
     return result
@@ -1003,6 +1334,7 @@ async def list_ot_requests_impl(
             "assigned_worker_id": r.assigned_worker_id,
             "assigned_worker_name": r.assigned_worker.name if r.assigned_worker else None,
             "application_count": len([a for a in r.applications if a.status == OTApplicationStatus.PENDING]),
+            "required_employee_type": (sh.reasoning_trace or {}).get("required_employee_type") if sh and isinstance(sh.reasoning_trace, dict) else None,
         })
     return result
 
@@ -1068,9 +1400,18 @@ async def notify_ot_workers_impl(
 
     sh = ot_req.shift
     st = sh.shift_type if sh else None
+    required_employee_type = (sh.reasoning_trace or {}).get("required_employee_type") if sh and isinstance(sh.reasoning_trace, dict) else None
     notifications = []
 
     for wid in worker_ids:
+        worker = (await session.execute(select(Worker).where(Worker.id == wid))).scalar_one_or_none()
+        if not worker:
+            raise ValueError(f"Worker {wid} not found")
+        if required_employee_type and worker.employee_type != required_employee_type:
+            raise ValueError(
+                f"Worker {worker.name} is {worker.employee_type}; shift requires {required_employee_type}"
+            )
+
         # Upsert application row
         existing = (
             await session.execute(
@@ -1091,13 +1432,13 @@ async def notify_ot_workers_impl(
         else:
             existing.notified_at = datetime.utcnow()
 
-        subject = f"OT Opportunity: {st.name if st else 'Shift'} on {sh.date if sh else ''}"
+        subject = f"Open Shift Available: {st.name if st else 'Shift'} on {sh.date if sh else ''}"
         message = (
-            f"An overtime shift is available and you have been selected as a candidate.\n\n"
+            f"A shift is available for coverage and you are eligible to take it.\n\n"
             f"  Shift: {st.name if st else 'N/A'}\n"
             f"  Date:  {sh.date if sh else 'N/A'}\n"
             f"  Time:  {sh.start_time} – {sh.end_time}\n\n"
-            f"Please notify your manager or apply via the AXIS system.\n\n— AXIS Workforce AI"
+            f"Please express your interest by replying to your manager or via the AXIS system.\n\n— AXIS Workforce AI"
         )
         try:
             email_sent, _, wname = await notify_worker_impl(session, wid, "ot_opportunity", subject, message, sh.id if sh else None)
@@ -1133,6 +1474,30 @@ async def apply_for_ot_impl(
     ot_request_id: int,
     worker_id: int,
 ) -> dict:
+    ot_req = (
+        await session.execute(
+            select(OTRequest)
+            .options(selectinload(OTRequest.shift))
+            .where(OTRequest.id == ot_request_id)
+        )
+    ).scalar_one_or_none()
+    if not ot_req or not ot_req.shift:
+        raise ValueError(f"OT request {ot_request_id} not found")
+
+    required_employee_type = (
+        (ot_req.shift.reasoning_trace or {}).get("required_employee_type")
+        if isinstance(ot_req.shift.reasoning_trace, dict)
+        else None
+    )
+    if required_employee_type:
+        worker = (await session.execute(select(Worker).where(Worker.id == worker_id))).scalar_one_or_none()
+        if not worker:
+            raise ValueError(f"Worker {worker_id} not found")
+        if worker.employee_type != required_employee_type:
+            raise ValueError(
+                f"Worker {worker.name} is {worker.employee_type}; shift requires {required_employee_type}"
+            )
+
     existing = (
         await session.execute(
             select(OTApplication).where(
@@ -1195,12 +1560,28 @@ async def assign_first_ot_applicant_impl(
         raise ValueError(f"OT request {ot_request_id} not found")
 
     # Get first pending applicant (FIFO)
+    required_employee_type = (
+        (ot_req.shift.reasoning_trace or {}).get("required_employee_type")
+        if ot_req.shift and isinstance(ot_req.shift.reasoning_trace, dict)
+        else None
+    )
     first = next(
-        (a for a in sorted(ot_req.applications, key=lambda x: x.applied_at)
-         if a.status == OTApplicationStatus.PENDING),
+        (
+            a
+            for a in sorted(ot_req.applications, key=lambda x: x.applied_at)
+            if a.status == OTApplicationStatus.PENDING
+            and (
+                not required_employee_type
+                or (a.worker and a.worker.employee_type == required_employee_type)
+            )
+        ),
         None,
     )
     if not first:
+        if required_employee_type:
+            raise ValueError(
+                f"No pending applicants matching required role: {required_employee_type}"
+            )
         raise ValueError("No pending applicants for this OT request")
 
     sh = ot_req.shift
@@ -1267,6 +1648,97 @@ async def assign_first_ot_applicant_impl(
     }
 
 
+async def assign_ot_worker_impl(
+    session: AsyncSession,
+    ot_request_id: int,
+    worker_id: int,
+) -> dict:
+    ot_req = (
+        await session.execute(
+            select(OTRequest)
+            .options(
+                selectinload(OTRequest.shift).selectinload(Shift.shift_type),
+                selectinload(OTRequest.applications).selectinload(OTApplication.worker),
+            )
+            .where(OTRequest.id == ot_request_id)
+        )
+    ).scalar_one_or_none()
+    if not ot_req or not ot_req.shift:
+        raise ValueError(f"OT request {ot_request_id} not found")
+
+    worker = (await session.execute(select(Worker).where(Worker.id == worker_id))).scalar_one_or_none()
+    if not worker:
+        raise ValueError(f"Worker {worker_id} not found")
+
+    required_employee_type = (
+        (ot_req.shift.reasoning_trace or {}).get("required_employee_type")
+        if isinstance(ot_req.shift.reasoning_trace, dict)
+        else None
+    )
+    if required_employee_type and worker.employee_type != required_employee_type:
+        raise ValueError(
+            f"Worker {worker.name} is {worker.employee_type}; shift requires {required_employee_type}"
+        )
+
+    sh = ot_req.shift
+    st = sh.shift_type
+
+    try:
+        vr = await validate_schedule_impl(session, worker.id, sh.shift_type_id, sh.date, sh.start_time, sh.end_time)
+        validation_passed = vr.is_valid
+    except Exception:
+        validation_passed = False
+
+    now = datetime.utcnow()
+    sh.worker_id = worker.id
+    sh.status = ShiftStatus.CONFIRMED
+    ot_req.status = OTRequestStatus.ASSIGNED
+    ot_req.assigned_worker_id = worker.id
+    ot_req.assigned_at = now
+
+    selected_app = next((a for a in ot_req.applications if a.worker_id == worker.id), None)
+    if selected_app:
+        selected_app.status = OTApplicationStatus.ASSIGNED
+        selected_app.resolved_at = now
+
+    rejected_count = 0
+    for app in ot_req.applications:
+        if app.worker_id != worker.id and app.status == OTApplicationStatus.PENDING:
+            app.status = OTApplicationStatus.REJECTED
+            app.resolved_at = now
+            rejected_count += 1
+
+    await session.flush()
+
+    try:
+        email_sent, _, _ = await notify_worker_impl(
+            session,
+            worker.id,
+            "ot_assigned",
+            f"OT Shift Assigned: {st.name if st else 'Shift'} on {sh.date}",
+            (
+                f"You have been assigned to an open shift.\n\n"
+                f"  Shift: {st.name if st else 'N/A'}\n"
+                f"  Date:  {sh.date}\n"
+                f"  Time:  {sh.start_time} - {sh.end_time}\n\n"
+                f"- AXIS Workforce AI"
+            ),
+            sh.id,
+        )
+    except Exception:
+        email_sent = False
+
+    return {
+        "ot_request_id": ot_request_id,
+        "shift_id": sh.id,
+        "assigned_worker_id": worker.id,
+        "assigned_worker_name": worker.name,
+        "rejected_count": rejected_count,
+        "email_sent": email_sent,
+        "validation_passed": validation_passed,
+    }
+
+
 async def resolve_leave_request_impl(
     session: AsyncSession, leave_request_id: int
 ) -> dict[str, Any]:
@@ -1312,6 +1784,7 @@ async def resolve_leave_request_impl(
         lr.replacement_worker_id = w.id
         lr.resolution_summary = f"Covered by {w.name} (shift #{cresp.shift_id})"
         lr.resolved_at = datetime.utcnow()
+        sh.worker_id = None
         sh.status = ShiftStatus.SWAPPED
 
         email_sent, _, name = await notify_worker_impl(

@@ -45,7 +45,10 @@ from app.schemas.schemas import (
     NotifyOTResponse,
     ApplyOTRequest,
     ApplyOTResponse,
+    AssignOTRequest,
     AssignOTResponse,
+    QueryAssistantRequest,
+    QueryAssistantResponse,
 )
 from app.services.axis_service import (
     create_shift_impl,
@@ -64,8 +67,10 @@ from app.services.axis_service import (
     list_ot_applications_impl,
     notify_ot_workers_impl,
     apply_for_ot_impl,
+    assign_ot_worker_impl,
     assign_first_ot_applicant_impl,
     get_worker_weekly_stats,
+    generate_query_response_impl,
 )
 
 
@@ -188,6 +193,7 @@ async def list_shifts(
             start_time=r.start_time,
             end_time=r.end_time,
             status=r.status.value if hasattr(r.status, "value") else str(r.status),
+            required_employee_type=(r.reasoning_trace or {}).get("required_employee_type") if isinstance(r.reasoning_trace, dict) else None,
         )
         for r in rows
         if r.start_time and r.end_time
@@ -242,6 +248,11 @@ async def create_shift_manual(
         end_time=body.end_time,
         status=status,
         created_by="manual",
+        reasoning_trace=(
+            {"required_employee_type": body.required_employee_type}
+            if body.required_employee_type
+            else None
+        ),
     )
     session.add(shift)
     await session.commit()
@@ -264,6 +275,7 @@ async def create_shift_manual(
         start_time=shift.start_time,
         end_time=shift.end_time,
         status=shift.status.value,
+        required_employee_type=(shift.reasoning_trace or {}).get("required_employee_type") if isinstance(shift.reasoning_trace, dict) else None,
     )
 
 
@@ -309,6 +321,13 @@ async def update_shift(
     shift.start_time = new_start
     shift.end_time = new_end
     shift.shift_type_id = new_type_id
+    if "required_employee_type" in body.model_fields_set:
+        trace = dict(shift.reasoning_trace or {})
+        if body.required_employee_type:
+            trace["required_employee_type"] = body.required_employee_type
+        else:
+            trace.pop("required_employee_type", None)
+        shift.reasoning_trace = trace or None
 
     # Auto-derive status if not explicitly set
     if body.status:
@@ -341,6 +360,7 @@ async def update_shift(
         start_time=shift.start_time,
         end_time=shift.end_time,
         status=shift.status.value,
+        required_employee_type=(shift.reasoning_trace or {}).get("required_employee_type") if isinstance(shift.reasoning_trace, dict) else None,
     )
 
 
@@ -376,7 +396,12 @@ async def list_all_employees(
     rows = (await session.execute(stmt)).scalars().all()
     result = []
     for r in rows:
-        stats = await get_worker_weekly_stats(session, r.id, r.max_weekly_hours or 40)
+        stats = await get_worker_weekly_stats(
+            session,
+            r.id,
+            r.max_weekly_hours or 40,
+            fallback_to_next_assigned_week=True,
+        )
         result.append({
             "id": r.id,
             "employee_id": r.employee_id,
@@ -577,6 +602,23 @@ async def process_message(request: OrchestratorInput):
     )
 
 
+@app.post("/chat/query-response", response_model=QueryAssistantResponse)
+async def query_response(
+    request: QueryAssistantRequest,
+    session: AsyncSession = Depends(get_db),
+):
+    text = await generate_query_response_impl(
+        session,
+        message=request.message,
+        sbu_code=request.sbu_code,
+        department_code=request.department_code,
+        date_range_start=request.date_range_start,
+        date_range_end=request.date_range_end,
+        shift_count=request.shift_count,
+    )
+    return QueryAssistantResponse(response=text)
+
+
 @app.get("/swap/leave-requests")
 async def list_leave_requests(
     sbu_code: str,
@@ -624,18 +666,34 @@ async def create_leave_request(
     body: dict,
     session: AsyncSession = Depends(get_db),
 ):
+    leave_date = date.fromisoformat(body["date"])
+    shift_id = body.get("shift_id")
+
+    # If shift_id is omitted, auto-link the worker's active shift on that date.
+    if not shift_id:
+        linked_shift = (
+            await session.execute(
+                select(Shift).where(
+                    Shift.worker_id == body["worker_id"],
+                    Shift.date == leave_date,
+                    Shift.status.in_([ShiftStatus.PROPOSED, ShiftStatus.CONFIRMED, ShiftStatus.PENDING]),
+                ).order_by(Shift.start_time.asc())
+            )
+        ).scalars().first()
+        shift_id = linked_shift.id if linked_shift else None
+
     lr = LeaveRequest(
         worker_id=body["worker_id"],
-        shift_id=body.get("shift_id"),
-        date=date.fromisoformat(body["date"]),
+        shift_id=shift_id,
+        date=leave_date,
         reason=body.get("reason", ""),
         status=LeaveStatus.PENDING,
     )
     session.add(lr)
 
     # Mark the linked shift as PENDING so the calendar flags it as uncovered
-    if body.get("shift_id"):
-        shift = await session.get(Shift, body["shift_id"])
+    if shift_id:
+        shift = await session.get(Shift, shift_id)
         if shift and shift.status not in (ShiftStatus.CANCELLED, ShiftStatus.SWAPPED):
             shift.status = ShiftStatus.PENDING
 
@@ -695,9 +753,10 @@ async def get_ot_workers(
     sbu_code: str,
     department_code: str,
     shift_date: date,
+    shift_id: int | None = None,
     session: AsyncSession = Depends(get_db),
 ):
-    return await get_ot_workers_impl(session, sbu_code, department_code, shift_date)
+    return await get_ot_workers_impl(session, sbu_code, department_code, shift_date, shift_id=shift_id)
 
 
 @app.get("/ot/requests")
@@ -752,6 +811,20 @@ async def assign_first_ot(
 ):
     try:
         result = await assign_first_ot_applicant_impl(session, ot_request_id)
+        await session.commit()
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@app.post("/ot/requests/{ot_request_id}/assign", response_model=AssignOTResponse)
+async def assign_ot_worker(
+    ot_request_id: int,
+    body: AssignOTRequest,
+    session: AsyncSession = Depends(get_db),
+):
+    try:
+        result = await assign_ot_worker_impl(session, ot_request_id, body.worker_id)
         await session.commit()
         return result
     except ValueError as e:

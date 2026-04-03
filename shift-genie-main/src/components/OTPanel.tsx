@@ -1,463 +1,259 @@
-import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Clock, Bell, CheckCircle, ChevronDown, ChevronUp, Loader2, UserCheck, X } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Bell, CheckCircle, ChevronDown, ChevronUp, Clock, Loader2, RefreshCw } from 'lucide-react';
 import Swal from 'sweetalert2';
 import { useAxis } from '@/context/AxisContext';
 import {
-  fetchOTRequests,
+  assignOTWorker,
   fetchOTApplications,
-  fetchOTWorkers,
+  fetchOTRequests,
+  fetchOTWorkersForShift,
   notifyOTWorkers,
-  applyForOT,
-  assignFirstOTApplicant,
   OTRequestItem,
-  OTApplicationItem,
   OTWorkerItem,
 } from '@/lib/api';
 
 const STATUS_BADGE: Record<string, string> = {
-  open:     'bg-amber-500/15 text-amber-400',
+  open: 'bg-amber-500/15 text-amber-400',
   notified: 'bg-blue-500/15 text-blue-400',
   assigned: 'bg-emerald-500/15 text-emerald-400',
-  cancelled:'bg-red-500/15 text-red-400',
+  cancelled: 'bg-red-500/15 text-red-400',
 };
 
-const APP_STATUS_BADGE: Record<string, string> = {
-  pending:  'bg-amber-500/15 text-amber-400',
-  assigned: 'bg-emerald-500/15 text-emerald-400',
-  rejected: 'bg-muted text-muted-foreground',
-};
-
-function hoursBar(used: number, max: number) {
-  const pct = Math.min(100, (used / max) * 100);
-  const color = pct >= 100 ? 'bg-red-500' : pct >= 75 ? 'bg-amber-500' : 'bg-emerald-500';
-  return (
-    <div className="flex items-center gap-2 text-xs">
-      <div className="w-16 h-1.5 rounded-full bg-muted overflow-hidden">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
-      </div>
-      <span className="text-muted-foreground">{used}h / {max}h</span>
-    </div>
-  );
+function hoursLabel(w: OTWorkerItem): string {
+  return `${w.name} (${w.employee_type}) - ${w.weekly_hours_used}h/${w.max_weekly_hours}h`;
 }
 
-// ── Notify Workers Modal ──────────────────────────────────────────────
-function NotifyModal({
-  otRequest,
-  onClose,
-}: {
-  otRequest: OTRequestItem;
-  onClose: () => void;
-}) {
+function OTRequestCard({ item }: { item: OTRequestItem }) {
   const { sbuCode, departmentCode } = useAxis();
   const queryClient = useQueryClient();
-  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [expanded, setExpanded] = useState(false);
+  const [selectedWorkerId, setSelectedWorkerId] = useState<number | ''>('');
 
-  const { data: workers = [], isFetching } = useQuery({
-    queryKey: ['ot-workers', sbuCode, departmentCode, otRequest.date],
-    queryFn: () => fetchOTWorkers(sbuCode, departmentCode, otRequest.date),
+  const { data: workers = [], isFetching: loadingWorkers } = useQuery({
+    queryKey: ['ot-workers', item.id, sbuCode, departmentCode, item.date],
+    queryFn: () => fetchOTWorkersForShift(sbuCode, departmentCode, item.date, item.shift_id),
     enabled: !!sbuCode && !!departmentCode,
   });
 
-  const { mutate: notify, isPending } = useMutation({
-    mutationFn: () => notifyOTWorkers(otRequest.id, Array.from(selected)),
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['ot-requests'] });
-      queryClient.invalidateQueries({ queryKey: ['ot-applications', otRequest.id] });
-      Swal.fire({
-        icon: 'success',
-        title: 'Workers Notified',
-        text: `${data.workers_notified} worker(s) have been notified about this OT opportunity.`,
-        confirmButtonColor: '#85409D',
-        timer: 2500,
-        timerProgressBar: true,
-      });
-      onClose();
-    },
-    onError: (err) => {
-      Swal.fire({ icon: 'error', title: 'Failed', text: err instanceof Error ? err.message : String(err), confirmButtonColor: '#85409D' });
-    },
-  });
-
-  function toggleWorker(id: number) {
-    setSelected(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="bg-card border border-border rounded-xl shadow-xl w-full max-w-md mx-4 p-5 space-y-4" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="font-semibold text-foreground">Notify Staff for OT</h3>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {otRequest.shift_type_name} · {otRequest.date} · {otRequest.start_time.slice(0,5)}–{otRequest.end_time.slice(0,5)}
-            </p>
-          </div>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
-        </div>
-
-        <div className="text-xs text-muted-foreground">Select employees to notify. Workers sorted by available hours remaining.</div>
-
-        <div className="space-y-1.5 max-h-64 overflow-y-auto">
-          {isFetching ? (
-            <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
-          ) : workers.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-4">No workers found in this department.</p>
-          ) : (
-            workers.map((w: OTWorkerItem) => (
-              <label
-                key={w.id}
-                className={`flex items-center gap-3 p-2.5 rounded-lg cursor-pointer transition-colors ${
-                  selected.has(w.id) ? 'bg-primary/10 border border-primary/30' : 'bg-muted/40 hover:bg-muted/60'
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  className="accent-primary"
-                  checked={selected.has(w.id)}
-                  onChange={() => toggleWorker(w.id)}
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-foreground truncate">{w.name}</div>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-xs text-muted-foreground capitalize">{w.employee_type}</span>
-                    {hoursBar(w.weekly_hours_used, w.max_weekly_hours)}
-                  </div>
-                </div>
-                {w.hours_remaining <= 0 && (
-                  <span className="text-xs text-red-400 font-medium flex-shrink-0">OT</span>
-                )}
-              </label>
-            ))
-          )}
-        </div>
-
-        <div className="flex items-center justify-between pt-1">
-          <span className="text-xs text-muted-foreground">{selected.size} selected</span>
-          <div className="flex gap-2">
-            <button onClick={onClose} className="px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground border border-border rounded-lg transition-colors">
-              Cancel
-            </button>
-            <button
-              onClick={() => notify()}
-              disabled={selected.size === 0 || isPending}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50 transition-opacity"
-            >
-              {isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bell className="w-3.5 h-3.5" />}
-              Notify Staff for OT
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── OT Request Card ───────────────────────────────────────────────────
-function OTRequestCard({ item }: { item: OTRequestItem }) {
-  const [expanded, setExpanded] = useState(false);
-  const [notifyOpen, setNotifyOpen] = useState(false);
-  const queryClient = useQueryClient();
-
-  const { data: applications = [], isFetching: fetchingApps } = useQuery({
+  const { data: applications = [], isFetching: loadingApps } = useQuery({
     queryKey: ['ot-applications', item.id],
     queryFn: () => fetchOTApplications(item.id),
     enabled: expanded,
     refetchInterval: expanded ? 5000 : false,
   });
 
-  const { mutate: apply, isPending: applying } = useMutation({
-    mutationFn: (worker_id: number) => applyForOT(item.id, worker_id),
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['ot-applications', item.id] });
+  const { mutate: notifyAll, isPending: notifying } = useMutation({
+    mutationFn: () => notifyOTWorkers(item.id, workers.map((w) => w.id)),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ot-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['ot-applications', item.id] });
       Swal.fire({
         icon: 'success',
-        title: 'Application Recorded',
-        text: `Queue position: #${data.queue_position}`,
+        title: 'Staff Notified',
+        text: `${workers.length} eligible staff notified for this open shift.`,
         confirmButtonColor: '#85409D',
-        timer: 2000,
+        timer: 1800,
         timerProgressBar: true,
       });
     },
     onError: (err) => {
-      Swal.fire({ icon: 'warning', title: 'Already Applied', text: err instanceof Error ? err.message : String(err), confirmButtonColor: '#85409D' });
+      Swal.fire({
+        icon: 'error',
+        title: 'Notify Failed',
+        text: err instanceof Error ? err.message : String(err),
+        confirmButtonColor: '#85409D',
+      });
     },
   });
 
-  const { mutate: assignFirst, isPending: assigning } = useMutation({
-    mutationFn: () => assignFirstOTApplicant(item.id),
+
+  const { mutate: assignSelected, isPending: assigningSelected } = useMutation({
+    mutationFn: (workerId: number) => assignOTWorker(item.id, workerId),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['ot-requests'] });
       queryClient.invalidateQueries({ queryKey: ['ot-applications', item.id] });
       queryClient.invalidateQueries({ queryKey: ['shifts'] });
       Swal.fire({
         icon: 'success',
-        title: 'OT Shift Assigned!',
-        html: `
-          <div style="text-align:left;font-size:14px;line-height:1.8">
-            <b>Worker:</b> ${data.assigned_worker_name}<br>
-            <b>Rejected:</b> ${data.rejected_count} other applicant(s)<br>
-            ${!data.validation_passed ? '<span style="color:#f59e0b">⚠️ Note: Worker may exceed weekly hours limit (OT approved).</span>' : ''}
-          </div>
-        `,
+        title: 'Shift Assigned',
+        text: `Assigned to ${data.assigned_worker_name}`,
         confirmButtonColor: '#85409D',
-        timer: 3000,
+        timer: 2000,
         timerProgressBar: true,
       });
     },
     onError: (err) => {
-      Swal.fire({ icon: 'error', title: 'Assignment Failed', text: err instanceof Error ? err.message : String(err), confirmButtonColor: '#85409D' });
+      Swal.fire({
+        icon: 'error',
+        title: 'Assign Failed',
+        text: err instanceof Error ? err.message : String(err),
+        confirmButtonColor: '#85409D',
+      });
     },
   });
 
-  const pendingApps = applications.filter(a => a.status === 'pending');
-  const isAssigned = item.status === 'assigned';
-
   return (
-    <>
-      <div className={`rounded-lg border p-4 space-y-3 ${isAssigned ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-border bg-card'}`}>
-        {/* Header */}
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-medium text-foreground text-sm">{item.shift_type_name ?? 'Unknown shift'}</span>
-              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_BADGE[item.status] ?? 'bg-muted text-muted-foreground'}`}>
-                {item.status}
-              </span>
-              {item.application_count > 0 && !isAssigned && (
-                <span className="text-xs px-2 py-0.5 rounded-full bg-primary/15 text-primary font-medium">
-                  {item.application_count} applicant{item.application_count !== 1 ? 's' : ''}
-                </span>
-              )}
-            </div>
-            <div className="text-xs text-muted-foreground mt-0.5">
-              {item.date} · {item.start_time.slice(0,5)}–{item.end_time.slice(0,5)}
-              {item.leave_request_id && <span className="ml-2 text-amber-400">Leave #{item.leave_request_id}</span>}
-            </div>
-            {isAssigned && item.assigned_worker_name && (
-              <div className="text-xs text-emerald-400 mt-1 flex items-center gap-1">
-                <UserCheck className="w-3 h-3" />
-                Assigned to {item.assigned_worker_name}
-              </div>
-            )}
+    <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-foreground text-sm">{item.shift_type_name ?? 'Open shift'}</span>
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_BADGE[item.status] ?? 'bg-muted text-muted-foreground'}`}>
+              {item.status}
+            </span>
           </div>
-
-          {/* Actions */}
-          {!isAssigned && (
-            <div className="flex items-center gap-1.5 flex-shrink-0">
-              <button
-                onClick={() => setNotifyOpen(true)}
-                className="flex items-center gap-1 text-xs bg-blue-500/15 text-blue-400 px-2.5 py-1.5 rounded-lg hover:bg-blue-500/25 transition-colors"
-              >
-                <Bell className="w-3 h-3" />
-                Notify
-              </button>
-              <button
-                onClick={() => setExpanded(v => !v)}
-                className="text-muted-foreground hover:text-foreground transition-colors"
-              >
-                {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </button>
-            </div>
+          <div className="text-xs text-muted-foreground mt-0.5">
+            {item.date} · {item.start_time.slice(0, 5)}-{item.end_time.slice(0, 5)}
+          </div>
+          {item.required_employee_type && (
+            <div className="text-xs text-primary mt-1">Required role: {item.required_employee_type}</div>
+          )}
+          {item.assigned_worker_name && (
+            <div className="text-xs text-emerald-400 mt-1">Assigned: {item.assigned_worker_name}</div>
           )}
         </div>
 
-        {/* Application Queue */}
-        {expanded && (
-          <div className="border-t border-border pt-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                Application Queue (FIFO)
-              </span>
-              {fetchingApps && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
-            </div>
-
-            {applications.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No applications yet. Notify staff to start the queue.</p>
-            ) : (
-              <div className="space-y-1.5">
-                {applications.map((app: OTApplicationItem, idx) => (
-                  <div key={app.id} className={`flex items-center gap-3 rounded-lg px-3 py-2 ${
-                    app.status === 'assigned' ? 'bg-emerald-500/10' : app.status === 'rejected' ? 'opacity-50 bg-muted/20' : 'bg-muted/40'
-                  }`}>
-                    {app.status === 'pending' && (
-                      <span className="text-xs font-bold text-primary w-4">#{idx + 1}</span>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-foreground truncate">{app.worker_name}</div>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        {hoursBar(app.weekly_hours_used, app.max_weekly_hours)}
-                        {app.applied_at && (
-                          <span className="text-xs text-muted-foreground">
-                            {new Date(app.applied_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${APP_STATUS_BADGE[app.status] ?? ''}`}>
-                      {app.status}
-                    </span>
-                    {/* Apply on behalf of notified worker (MVP simulation) */}
-                    {app.status === 'pending' && !app.applied_at?.includes('T') === false && app.notified_at && !app.applied_at ? (
-                      <button
-                        onClick={() => apply(app.worker_id)}
-                        disabled={applying}
-                        className="text-xs text-primary hover:underline disabled:opacity-50 flex-shrink-0"
-                      >
-                        Apply
-                      </button>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Assign First Applicant */}
-            {pendingApps.length > 0 && (
-              <button
-                onClick={async () => {
-                  const first = pendingApps[0];
-                  const isOT = first.weekly_hours_used >= first.max_weekly_hours;
-
-                  // ── Req 3: OT threshold warning — must confirm before proceeding ──
-                  if (isOT) {
-                    const otWarn = await Swal.fire({
-                      title: '⚠️ Overtime Warning',
-                      html: `
-                        <div style="text-align:left;font-size:14px;line-height:1.8">
-                          <b>${first.worker_name}</b> has <b>${first.weekly_hours_used}h</b>
-                          assigned this week (limit: ${first.max_weekly_hours}h).<br><br>
-                          Assigning this shift will count as <b>Overtime</b>.
-                          Do you need to proceed?
-                        </div>
-                      `,
-                      icon: 'warning',
-                      showCancelButton: true,
-                      confirmButtonText: 'Proceed',
-                      cancelButtonText: 'Cancel',
-                      confirmButtonColor: '#85409D',
-                      cancelButtonColor: '#9ca3af',
-                    });
-                    if (!otWarn.isConfirmed) return;
-                  }
-
-                  const result = await Swal.fire({
-                    title: 'Assign First Applicant?',
-                    html: `Assign <b>${first.worker_name}</b> to this OT shift?<br><small>${pendingApps.length - 1} other applicant(s) will be rejected.</small>`,
-                    icon: 'question',
-                    showCancelButton: true,
-                    confirmButtonText: 'Assign',
-                    cancelButtonText: 'Cancel',
-                    confirmButtonColor: '#85409D',
-                    cancelButtonColor: '#9ca3af',
-                  });
-                  if (result.isConfirmed) assignFirst();
-                }}
-                disabled={assigning}
-                className="w-full flex items-center justify-center gap-2 text-sm bg-primary text-primary-foreground rounded-lg py-2 hover:opacity-90 disabled:opacity-50 transition-opacity mt-1"
-              >
-                {assigning ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-                Assign First Applicant ({pendingApps[0]?.worker_name})
-              </button>
-            )}
-
-            {/* Apply on behalf of notified-but-not-applied workers */}
-            {applications.filter(a => a.status === 'pending' && a.notified_at).length > 0 && (
-              <div className="border-t border-border pt-2">
-                <p className="text-xs text-muted-foreground mb-1.5">Record OT application on behalf of notified staff:</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {applications
-                    .filter(a => a.status === 'pending' && a.notified_at)
-                    .map(a => (
-                      <button
-                        key={a.id}
-                        onClick={() => apply(a.worker_id)}
-                        disabled={applying}
-                        className="text-xs bg-muted hover:bg-muted/80 text-foreground px-2.5 py-1 rounded-lg transition-colors disabled:opacity-50"
-                      >
-                        {a.worker_name} applied
-                      </button>
-                    ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="text-muted-foreground hover:text-foreground transition-colors"
+        >
+          {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        </button>
       </div>
 
-      {notifyOpen && <NotifyModal otRequest={item} onClose={() => setNotifyOpen(false)} />}
-    </>
+      {item.status === 'open' && (
+        <button
+          onClick={() => notifyAll()}
+          disabled={notifying || loadingWorkers || workers.length === 0}
+          className="flex items-center gap-1.5 text-xs bg-blue-500/15 text-blue-400 px-3 py-2 rounded-lg hover:bg-blue-500/25 transition-colors disabled:opacity-50 w-full justify-center"
+        >
+          {notifying ? <Loader2 className="w-3 h-3 animate-spin" /> : <Bell className="w-3 h-3" />}
+          {loadingWorkers ? 'Loading...' : `Notify All Eligible${workers.length > 0 ? ` (${workers.length})` : ''}`}
+        </button>
+      )}
+
+      {item.status === 'notified' && (
+        <div className="flex items-center gap-2">
+          <select
+            value={selectedWorkerId}
+            onChange={(e) => setSelectedWorkerId(e.target.value ? Number(e.target.value) : '')}
+            className="flex-1 h-9 rounded-md border border-border bg-background px-2 text-sm"
+            disabled={loadingWorkers || assigningSelected}
+          >
+            <option value="">Select staff to assign...</option>
+            {workers.map((w) => (
+              <option key={w.id} value={w.id}>{hoursLabel(w)}</option>
+            ))}
+          </select>
+          <button
+            onClick={() => selectedWorkerId && assignSelected(selectedWorkerId)}
+            disabled={!selectedWorkerId || assigningSelected || loadingWorkers}
+            className="flex items-center gap-1.5 text-xs bg-primary text-primary-foreground px-3 py-2 rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
+          >
+            {assigningSelected ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3" />}
+            Assign
+          </button>
+        </div>
+      )}
+
+      {expanded && (
+        <div className="border-t border-border pt-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Notified Staff</span>
+            {loadingApps && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+          </div>
+
+          {applications.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No staff notified yet. Use Notify above to invite staff.</p>
+          ) : (
+            applications.map((a) => (
+              <div key={a.id} className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2 gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-foreground truncate">{a.worker_name}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {a.weekly_hours_used}h/{a.max_weekly_hours}h ·{' '}
+                    <span className={a.status === 'assigned' ? 'text-emerald-400' : a.status === 'rejected' ? 'text-red-400' : 'text-amber-400'}>
+                      {a.status}
+                    </span>
+                  </div>
+                </div>
+                <div className="text-xs text-muted-foreground shrink-0">
+                  {a.notified_at ? new Date(a.notified_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-'}
+                </div>
+                {a.status === 'pending' && item.status !== 'assigned' && (
+                  <button
+                    onClick={() => assignSelected(a.worker_id)}
+                    disabled={assigningSelected}
+                    className="flex items-center gap-1 text-xs bg-emerald-500/15 text-emerald-400 px-2.5 py-1.5 rounded-md hover:bg-emerald-500/25 transition-colors disabled:opacity-50 shrink-0"
+                  >
+                    {assigningSelected ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3" />}
+                    Accept
+                  </button>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
-// ── Main OT Panel ─────────────────────────────────────────────────────
 export function OTPanel() {
-  const [statusFilter, setStatusFilter] = useState('open');
   const { sbuCode, departmentCode } = useAxis();
   const queryClient = useQueryClient();
 
   const { data: otRequests = [], isFetching } = useQuery({
-    queryKey: ['ot-requests', sbuCode, departmentCode, statusFilter],
-    queryFn: () => fetchOTRequests(sbuCode, departmentCode, statusFilter),
+    queryKey: ['ot-requests', sbuCode, departmentCode, 'all'],
+    queryFn: () => fetchOTRequests(sbuCode, departmentCode, 'all'),
     enabled: !!sbuCode && !!departmentCode,
     refetchInterval: 10000,
   });
 
+  const openItems = useMemo(() => otRequests.filter((r) => r.status === 'open'), [otRequests]);
+  const notifiedItems = useMemo(() => otRequests.filter((r) => r.status === 'notified'), [otRequests]);
+
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-border">
         <div className="flex items-center gap-2">
           <Clock className="w-4 h-4 text-primary" />
-          <span className="text-sm font-medium text-foreground">OT Management</span>
+          <span className="text-sm font-medium text-foreground">Open Shifts</span>
           {isFetching && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />}
         </div>
         <button
           onClick={() => queryClient.invalidateQueries({ queryKey: ['ot-requests'] })}
-          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
         >
+          <RefreshCw className="w-3.5 h-3.5" />
           Refresh
         </button>
       </div>
 
-      {/* How it works banner */}
-      <div className="mx-4 mt-3 px-3 py-2 rounded-lg bg-primary/8 border border-primary/20 text-xs text-muted-foreground leading-relaxed">
-        <span className="text-primary font-medium">Flow: </span>
-        OT requests are created automatically when a leave has no eligible swap (&lt;40hr) candidate.
-        Notify staff → they apply (FIFO) → assign the first applicant.
-      </div>
-
-      {/* Status filter */}
-      <div className="flex gap-1.5 px-4 py-3">
-        {['open', 'notified', 'assigned', 'all'].map(s => (
-          <button
-            key={s}
-            onClick={() => setStatusFilter(s)}
-            className={`text-xs px-2.5 py-1 rounded-full capitalize transition-colors ${
-              statusFilter === s ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            {s}
-          </button>
-        ))}
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-3">
+      <div className="flex-1 overflow-y-auto p-4 space-y-6">
         {!sbuCode || !departmentCode ? (
-          <p className="text-sm text-muted-foreground text-center mt-8">Select an SBU and department to view OT requests.</p>
-        ) : otRequests.length === 0 ? (
-          <div className="text-center mt-8 space-y-1">
-            <p className="text-sm text-muted-foreground">No {statusFilter === 'all' ? '' : statusFilter} OT requests.</p>
-            <p className="text-xs text-muted-foreground">OT requests are created automatically when a leave swap can't be filled within the 40-hour limit.</p>
-          </div>
+          <p className="text-sm text-muted-foreground text-center mt-8">Select an SBU and department to view open shifts.</p>
         ) : (
-          otRequests.map(item => <OTRequestCard key={item.id} item={item} />)
+          <>
+            <section className="space-y-3">
+              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Open</h3>
+              {openItems.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No open shifts.</p>
+              ) : (
+                openItems.map((item) => <OTRequestCard key={item.id} item={item} />)
+              )}
+            </section>
+
+            <section className="space-y-3">
+              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Notified</h3>
+              {notifiedItems.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No notified shifts.</p>
+              ) : (
+                notifiedItems.map((item) => <OTRequestCard key={item.id} item={item} />)
+              )}
+            </section>
+          </>
         )}
       </div>
     </div>

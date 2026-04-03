@@ -1,16 +1,14 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeftRight, AlertTriangle, CheckCircle, Loader2, ChevronDown, ChevronUp, RefreshCw, Clock } from 'lucide-react';
+import { ArrowLeftRight, CheckCircle, Loader2, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import { OTPanel } from './OTPanel';
 import Swal from 'sweetalert2';
 import { useAxis } from '@/context/AxisContext';
 import {
   fetchLeaveRequests,
-  fetchEscalations,
   findSwapCandidates,
   resolveLeaveRequest,
   LeaveRequestItem,
-  EscalationItem,
   SwapCandidatesResponse,
 } from '@/lib/api';
 
@@ -22,9 +20,14 @@ const RISK_COLOR: Record<string, string> = {
 
 const STATUS_BADGE: Record<string, string> = {
   pending: 'bg-amber-500/15 text-amber-400',
-  approved: 'bg-blue-500/15 text-blue-400',
+  approved: 'bg-emerald-500/15 text-emerald-400',
   covered: 'bg-emerald-500/15 text-emerald-400',
   rejected: 'bg-red-500/15 text-red-400',
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  approved: 'accepted',
+  covered: 'accepted',
 };
 
 function LeaveCard({ item }: { item: LeaveRequestItem }) {
@@ -79,7 +82,7 @@ function LeaveCard({ item }: { item: LeaveRequestItem }) {
           <div className="flex items-center gap-2">
             <span className="font-medium text-foreground text-sm">{item.worker_name}</span>
             <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_BADGE[item.status] ?? 'bg-muted text-muted-foreground'}`}>
-              {item.status}
+              {STATUS_LABEL[item.status] ?? item.status}
             </span>
           </div>
           <div className="text-xs text-muted-foreground mt-0.5">
@@ -88,15 +91,38 @@ function LeaveCard({ item }: { item: LeaveRequestItem }) {
           {item.reason && <div className="text-xs text-muted-foreground mt-1 italic">"{item.reason}"</div>}
         </div>
 
-        {item.status === 'pending' && item.shift_id && (
-          <button
-            onClick={() => loadCandidates()}
-            disabled={loadingCandidates}
-            className="flex items-center gap-1.5 text-xs bg-primary/15 text-primary px-3 py-1.5 rounded-lg hover:bg-primary/25 transition-colors disabled:opacity-50 flex-shrink-0"
-          >
-            {loadingCandidates ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowLeftRight className="w-3 h-3" />}
-            Find Swaps
-          </button>
+        {item.shift_id && (
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              onClick={async () => {
+                const result = await Swal.fire({
+                  title: 'Accept leave request?',
+                  text: `Execute leave request for ${item.worker_name} on ${item.date} now?`,
+                  icon: 'question',
+                  showCancelButton: true,
+                  confirmButtonText: 'Accept',
+                  cancelButtonText: 'Cancel',
+                  confirmButtonColor: '#85409D',
+                  cancelButtonColor: '#9ca3af',
+                });
+                if (result.isConfirmed) resolve();
+              }}
+              disabled={resolving || item.status !== 'pending'}
+              className="flex items-center gap-1.5 text-xs bg-primary text-primary-foreground px-3 py-1.5 rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {resolving ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3" />}
+              Accept
+            </button>
+
+            <button
+              onClick={() => loadCandidates()}
+              disabled={loadingCandidates || item.status !== 'pending'}
+              className="flex items-center gap-1.5 text-xs bg-primary/15 text-primary px-3 py-1.5 rounded-lg hover:bg-primary/25 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loadingCandidates ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowLeftRight className="w-3 h-3" />}
+              Find Swaps
+            </button>
+          </div>
         )}
 
         {item.resolution_summary && (
@@ -169,36 +195,10 @@ function LeaveCard({ item }: { item: LeaveRequestItem }) {
   );
 }
 
-function EscalationCard({ item }: { item: EscalationItem }) {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-4 space-y-2">
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
-            <span className="text-sm font-medium text-foreground">{item.shift_type_name ?? 'Unknown shift'}</span>
-          </div>
-          <div className="text-xs text-muted-foreground mt-0.5">{item.date}</div>
-          <div className="text-xs text-red-400/80 mt-1">{item.description}</div>
-        </div>
-        <button onClick={() => setExpanded(v => !v)} className="text-muted-foreground hover:text-foreground flex-shrink-0">
-          {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-        </button>
-      </div>
-      {expanded && (
-        <div className="text-xs text-muted-foreground border-t border-border pt-2 leading-relaxed">
-          {item.agent_reasoning}
-        </div>
-      )}
-    </div>
-  );
-}
-
-type Tab = 'leave' | 'escalations' | 'ot';
+type Tab = 'leave' | 'open-shifts';
 
 export function SwapPanel() {
-  const [tab, setTab] = useState<Tab>('leave');
+  const [tab, setTab] = useState<Tab>('open-shifts');
   const [statusFilter, setStatusFilter] = useState('pending');
   const { sbuCode, departmentCode } = useAxis();
   const queryClient = useQueryClient();
@@ -210,14 +210,7 @@ export function SwapPanel() {
     refetchInterval: 5000,
   });
 
-  const { data: escalations = [], isFetching: fetchingEsc } = useQuery({
-    queryKey: ['escalations', sbuCode, departmentCode],
-    queryFn: () => fetchEscalations(sbuCode, departmentCode),
-    enabled: !!sbuCode && !!departmentCode,
-    refetchInterval: 10000,
-  });
-
-  const isFetching = tab === 'leave' ? fetchingLeave : fetchingEsc;
+  const isFetching = fetchingLeave;
 
   return (
     <div className="flex flex-col h-full">
@@ -225,11 +218,11 @@ export function SwapPanel() {
       <div className="flex items-center justify-between px-5 py-4 border-b border-border">
         <div className="flex items-center gap-3">
           <ArrowLeftRight className="w-5 h-5 text-primary" />
-          <h2 className="font-display font-semibold text-foreground">Swap Management</h2>
+          <h2 className="font-display font-semibold text-foreground">Open Shifts</h2>
           {isFetching && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
         </div>
         <button
-          onClick={() => queryClient.invalidateQueries({ queryKey: ['leave-requests', 'escalations'] })}
+          onClick={() => queryClient.invalidateQueries({ queryKey: ['leave-requests', 'ot-requests'] })}
           className="text-muted-foreground hover:text-foreground transition-colors"
         >
           <RefreshCw className="w-4 h-4" />
@@ -239,9 +232,8 @@ export function SwapPanel() {
       {/* Tabs */}
       <div className="flex border-b border-border px-5">
         {([
+          { key: 'open-shifts', label: 'Open Shifts' },
           { key: 'leave',       label: 'Leave Requests' },
-          { key: 'escalations', label: 'Escalations'    },
-          { key: 'ot',          label: 'OT Management'  },
         ] as { key: Tab; label: string }[]).map(({ key, label }) => (
           <button
             key={key}
@@ -258,18 +250,13 @@ export function SwapPanel() {
                 {leaveRequests.length}
               </span>
             )}
-            {key === 'escalations' && escalations.length > 0 && (
-              <span className="ml-1.5 text-xs bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded-full">
-                {escalations.length}
-              </span>
-            )}
           </button>
         ))}
       </div>
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {tab === 'ot' ? (
+        {tab === 'open-shifts' ? (
           <OTPanel />
         ) : !sbuCode || !departmentCode ? (
           <p className="text-sm text-muted-foreground text-center mt-8">
@@ -301,17 +288,7 @@ export function SwapPanel() {
               leaveRequests.map((item) => <LeaveCard key={item.id} item={item} />)
             )}
           </>
-        ) : (
-          <>
-            {escalations.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center mt-8">
-                No open escalations.
-              </p>
-            ) : (
-              escalations.map((item) => <EscalationCard key={item.id} item={item} />)
-            )}
-          </>
-        )}
+        ) : null}
       </div>
     </div>
   );
