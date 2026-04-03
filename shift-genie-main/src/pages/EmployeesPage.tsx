@@ -72,7 +72,7 @@ function DetailModal({ emp, onClose }: { emp: Employee; onClose: () => void }) {
           <Row label="Email" value={emp.email ?? '—'} />
           <Row label="Phone" value={emp.phone ?? '—'} />
           <Row label="Max Weekly Hours" value={`${emp.max_weekly_hours}h`} />
-          <Row label="Hours Used (this week)" value={`${emp.weekly_hours_used}h`} />
+          <Row label="Hours Used (roster week)" value={`${emp.weekly_hours_used}h`} />
           <Row label="OT Hours (this week)" value={
             emp.ot_hours > 0
               ? <span className="text-red-400 font-semibold">{emp.ot_hours}h</span>
