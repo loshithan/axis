@@ -51,7 +51,7 @@ const Index = () => {
             }`}
           >
             <ArrowLeftRight className="w-4 h-4" />
-            Open Shifts
+            Swap Management
           </button>
 
           {/* Chat indicator when hidden */}
