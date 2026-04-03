@@ -1286,9 +1286,6 @@ async def resolve_leave_request_impl(
         raise ValueError("Leave request has no linked shift to cover.")
 
     sh = lr.shift
-    sbu = sh.shift_type.sbu
-    sbu_config = _sbu_config(sbu)
-    _ = sbu_config
 
     fc = await find_swap_candidates_impl(
         session, FindSwapCandidatesRequest(shift_id=sh.id)

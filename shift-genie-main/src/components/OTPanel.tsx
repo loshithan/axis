@@ -322,6 +322,30 @@ function OTRequestCard({ item }: { item: OTRequestItem }) {
               <button
                 onClick={async () => {
                   const first = pendingApps[0];
+                  const isOT = first.weekly_hours_used >= first.max_weekly_hours;
+
+                  // ── Req 3: OT threshold warning — must confirm before proceeding ──
+                  if (isOT) {
+                    const otWarn = await Swal.fire({
+                      title: '⚠️ Overtime Warning',
+                      html: `
+                        <div style="text-align:left;font-size:14px;line-height:1.8">
+                          <b>${first.worker_name}</b> has <b>${first.weekly_hours_used}h</b>
+                          assigned this week (limit: ${first.max_weekly_hours}h).<br><br>
+                          Assigning this shift will count as <b>Overtime</b>.
+                          Do you need to proceed?
+                        </div>
+                      `,
+                      icon: 'warning',
+                      showCancelButton: true,
+                      confirmButtonText: 'Proceed',
+                      cancelButtonText: 'Cancel',
+                      confirmButtonColor: '#85409D',
+                      cancelButtonColor: '#9ca3af',
+                    });
+                    if (!otWarn.isConfirmed) return;
+                  }
+
                   const result = await Swal.fire({
                     title: 'Assign First Applicant?',
                     html: `Assign <b>${first.worker_name}</b> to this OT shift?<br><small>${pendingApps.length - 1} other applicant(s) will be rejected.</small>`,

@@ -131,8 +131,24 @@ export function ShiftCalendar() {
   );
 
   const eventStyleGetter = useCallback((event: Event) => {
-    const shift = event.resource as Shift;
-    const isOpen = !shift.employee;
+    const shift = event.resource as Shift & { _raw: ShiftListItem };
+    const status = shift._raw?.status;
+
+    // PENDING: assigned worker has a leave request — flag as uncovered/awaiting swap
+    if (status === 'pending') {
+      return {
+        style: {
+          backgroundColor: 'hsla(38, 92%, 50%, 0.15)',
+          color: 'hsl(38, 92%, 40%)',
+          borderLeft: '3px dashed hsl(38, 92%, 50%)',
+          fontWeight: 600,
+          opacity: 0.95,
+        },
+      };
+    }
+
+    // OPEN: no worker assigned
+    const isOpen = !shift.employee || status === 'open';
     if (isOpen) {
       return {
         style: {
@@ -144,6 +160,7 @@ export function ShiftCalendar() {
         },
       };
     }
+
     return {
       style: {
         backgroundColor: ROLE_BG[shift.role],
@@ -176,6 +193,10 @@ export function ShiftCalendar() {
         </div>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-4 text-xs text-muted-foreground">
+            <div className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full border-2 border-dashed border-amber-500" style={{ backgroundColor: 'hsla(38,92%,50%,0.15)' }} />
+              <span>pending swap</span>
+            </div>
             {(Object.entries(ROLE_COLORS) as [ShiftRole, string][]).map(([role, color]) => (
               <div key={role} className="flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />

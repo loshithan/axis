@@ -632,6 +632,13 @@ async def create_leave_request(
         status=LeaveStatus.PENDING,
     )
     session.add(lr)
+
+    # Mark the linked shift as PENDING so the calendar flags it as uncovered
+    if body.get("shift_id"):
+        shift = await session.get(Shift, body["shift_id"])
+        if shift and shift.status not in (ShiftStatus.CANCELLED, ShiftStatus.SWAPPED):
+            shift.status = ShiftStatus.PENDING
+
     await session.commit()
     await session.refresh(lr)
     return {"id": lr.id, "status": lr.status.value}

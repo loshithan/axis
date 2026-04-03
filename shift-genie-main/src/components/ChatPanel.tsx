@@ -163,15 +163,59 @@ function parseTimeRange(text: string): { start_time?: string; end_time?: string 
   return {};
 }
 
-/** Extract a worker's full name from phrasing like "for Kavinda Silva" or "assign to John Doe". */
+const ROLE_KEYWORDS = new Set([
+  'doctor', 'doctors', 'nurse', 'nurses', 'technician', 'technicians',
+  'admin', 'admins', 'staff', 'worker', 'workers', 'all',
+]);
+
+/** Extract a worker's full name from phrasing like "for Kavinda Silva" or "assign to John Doe".
+ *  Returns null for generic role words like "for doctors". */
 function extractWorkerName(text: string): string | null {
   // "for Kavinda Silva" — two or more capitalised words after "for"
   const forMatch = text.match(/\bfor\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/);
-  if (forMatch) return forMatch[1];
+  if (forMatch && !ROLE_KEYWORDS.has(forMatch[1].toLowerCase())) return forMatch[1];
   // "assign to John Doe" or "assign John Doe"
   const assignMatch = text.match(/\bassign(?:ed)?\s+(?:to\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/);
-  if (assignMatch) return assignMatch[1];
+  if (assignMatch && !ROLE_KEYWORDS.has(assignMatch[1].toLowerCase())) return assignMatch[1];
   return null;
+}
+
+/** Parse comma/and-separated day numbers like "13,14" or "13 and 14" into date strings.
+ *  Falls back to single-date parse if no multi-date pattern found. */
+function parseMultipleDates(text: string): string[] {
+  const today = new Date();
+  const lower = text.toLowerCase().replace(/(\d+)(?:st|nd|rd|th)\b/g, '$1');
+
+  // Detect explicit month
+  let targetMonth = today.getMonth();
+  let targetYear = today.getFullYear();
+  for (let i = 0; i < MONTHS.length; i++) {
+    if (lower.includes(MONTHS[i])) { targetMonth = i; break; }
+  }
+  const yearMatch = lower.match(/\b(20\d{2})\b/);
+  if (yearMatch) targetYear = parseInt(yearMatch[1]);
+
+  const mo = String(targetMonth + 1).padStart(2, '0');
+
+  // "13,14" or "13, 14"
+  const commaMatch = lower.match(/\b(\d{1,2})\s*,\s*(\d{1,2})\b/);
+  if (commaMatch) {
+    return [
+      `${targetYear}-${mo}-${String(parseInt(commaMatch[1])).padStart(2, '0')}`,
+      `${targetYear}-${mo}-${String(parseInt(commaMatch[2])).padStart(2, '0')}`,
+    ];
+  }
+
+  // "13 and 14"
+  const andMatch = lower.match(/\b(\d{1,2})\s+and\s+(\d{1,2})\b/);
+  if (andMatch) {
+    return [
+      `${targetYear}-${mo}-${String(parseInt(andMatch[1])).padStart(2, '0')}`,
+      `${targetYear}-${mo}-${String(parseInt(andMatch[2])).padStart(2, '0')}`,
+    ];
+  }
+
+  return [parseDateFromText(text)];
 }
 
 /** Returns true when the message is asking to create/add a single shift (not bulk-generate). */
@@ -248,10 +292,19 @@ function buildAssistantResponse(
   );
 }
 
+interface PendingShiftTypeContext {
+  action: 'select_shift_type';
+  dates: string[];
+  workerId: number | null;
+  workerDisplayName: string;
+  shiftTypes: ShiftTypeItem[];
+}
+
 export function ChatPanel() {
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MESSAGE]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [pendingContext, setPendingContext] = useState<PendingShiftTypeContext | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
   const { sbuCode, departmentCode, sessionId } = useAxis();
@@ -272,6 +325,57 @@ export function ChatPanel() {
     let responseText = '';
 
     try {
+      // ── Handle follow-up reply to a pending shift-type selection ──
+      if (pendingContext?.action === 'select_shift_type') {
+        const reply = trimmed.toLowerCase().trim();
+        const { dates, workerId, workerDisplayName, shiftTypes } = pendingContext;
+        const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+        let typesToCreate: ShiftTypeItem[] = [];
+        if (reply === 'all' || reply.includes('all')) {
+          typesToCreate = shiftTypes;
+        } else {
+          const needle = normalize(reply);
+          const match = shiftTypes.find(st => normalize(st.name).includes(needle) || needle.includes(normalize(st.name)));
+          if (match) typesToCreate = [match];
+        }
+
+        if (typesToCreate.length === 0) {
+          responseText =
+            `⚠️ Couldn't match **"${trimmed}"** to a shift type. Say **"all"** or pick one:\n\n` +
+            shiftTypes.map(s => `- **${s.name}** (${s.start_time.slice(0, 5)}–${s.end_time.slice(0, 5)})`).join('\n');
+        } else {
+          setPendingContext(null);
+          const lines: string[] = [];
+          for (const date of dates) {
+            for (const st of typesToCreate) {
+              try {
+                await createShiftManual({
+                  worker_id: workerId,
+                  shift_type_id: st.id,
+                  date,
+                  start_time: st.start_time,
+                  end_time: st.end_time,
+                  status: workerId ? 'confirmed' : 'open',
+                });
+                lines.push(`- **${date}** · ${st.name} (${st.start_time.slice(0, 5)}–${st.end_time.slice(0, 5)}): ${workerDisplayName}`);
+              } catch (err) {
+                lines.push(`- **${date}** · ${st.name}: ❌ ${err instanceof Error ? err.message : String(err)}`);
+              }
+            }
+          }
+          responseText = `✅ **${lines.length} shift(s) created!**\n\n${lines.join('\n')}`;
+          queryClient.invalidateQueries({ queryKey: ['shifts'] });
+        }
+
+        setMessages(prev => [
+          ...prev,
+          { id: crypto.randomUUID(), role: 'assistant', content: responseText },
+        ]);
+        setIsTyping(false);
+        return;
+      }
+
       if (!sbuCode || !departmentCode) {
         responseText = '⚠️ Please select an SBU and department from the top bar before scheduling.';
       } else {
@@ -290,78 +394,86 @@ export function ChatPanel() {
           const workerName = (ep.worker_name as string | null) || extractWorkerName(trimmed);
 
           if (workerName || isSingleShiftRequest(trimmed)) {
-            // ── Single-shift creation path ──
-            const singleDate = (ep.date_range_start as string) || parseDateFromText(trimmed);
+            // ── Single/multi-date shift creation path ──
+            const dates = ep.date_range_start
+              ? [ep.date_range_start as string]
+              : parseMultipleDates(trimmed);
             const shiftTypes = await fetchShiftTypesList(sbuCode, departmentCode);
 
             if (shiftTypes.length === 0) {
               responseText = `⚠️ No shift types found for this department. Please check your SBU/department selection.`;
             } else {
-              // Match shift type: prefer LLM-provided name, then score against message text
-              const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-              const needle = normalize(epShiftType ?? '');
-              const matched = needle
-                ? (shiftTypes.find(st => normalize(st.name).includes(needle))
-                    ?? shiftTypes.find(st => needle.includes(normalize(st.name))))
-                : findBestShiftType(trimmed, shiftTypes);
+              // Resolve worker first (needed for conflict checks and pending context)
+              let workerId: number | null = null;
+              let workerDisplayName = 'Open (unassigned)';
+              let canProceed = true;
 
-              if (!matched) {
-                const available = shiftTypes.map(s =>
-                  `- **${s.name}** (${s.start_time.slice(0, 5)}–${s.end_time.slice(0, 5)})`
-                ).join('\n');
-                responseText = `ℹ️ Which shift type would you like to create on **${singleDate}**?\n\n${available}`;
-              } else {
-                let workerId: number | null = null;
-                let workerDisplayName = 'Open (unassigned)';
-                let canProceed = true;
+              if (workerName) {
+                const workers = await searchWorker(workerName, sbuCode);
+                if (workers.length === 0) {
+                  responseText = `⚠️ Could not find a worker named **"${workerName}"**. Please check the name and try again.`;
+                  canProceed = false;
+                } else {
+                  const worker = workers[0];
+                  workerId = worker.id;
+                  workerDisplayName = worker.name;
 
-                if (workerName) {
-                  const workers = await searchWorker(workerName, sbuCode);
-                  if (workers.length === 0) {
-                    responseText = `⚠️ Could not find a worker named **"${workerName}"**. Please check the name and try again.`;
-                    canProceed = false;
-                  } else {
-                    const worker = workers[0];
-                    workerId = worker.id;
-                    workerDisplayName = worker.name;
-
-                    // Pre-flight: worker already has a shift on this date?
-                    const existingShifts = await fetchShifts(sbuCode, departmentCode, singleDate, singleDate);
+                  // Pre-flight: worker already has a shift on any of the requested dates?
+                  for (const d of dates) {
+                    const existingShifts = await fetchShifts(sbuCode, departmentCode, d, d);
                     const workerExisting = existingShifts.find(s => s.worker_id === worker.id);
                     if (workerExisting) {
                       responseText =
-                        `⚠️ **${worker.name}** already has a shift on **${singleDate}**:\n\n` +
+                        `⚠️ **${worker.name}** already has a shift on **${d}**:\n\n` +
                         `- **${workerExisting.shift_type_name}** (${workerExisting.start_time.slice(0, 5)}–${workerExisting.end_time.slice(0, 5)}) \`[${workerExisting.status}]\`\n\n` +
                         `A worker cannot be assigned to more than one shift per day.`;
                       canProceed = false;
+                      break;
                     }
                   }
                 }
+              }
 
-                if (canProceed) {
-                  try {
-                    await createShiftManual({
-                      worker_id: workerId,
-                      shift_type_id: matched.id,
-                      date: singleDate,
-                      start_time: matched.start_time,
-                      end_time: matched.end_time,
-                      status: workerId ? 'confirmed' : 'open',
-                    });
-                    responseText =
-                      `✅ **Shift created!**\n\n` +
-                      `- **Shift:** ${matched.name}\n` +
-                      `- **Date:** ${singleDate}\n` +
-                      `- **Worker:** ${workerDisplayName}\n` +
-                      `- **Time:** ${matched.start_time.slice(0, 5)}–${matched.end_time.slice(0, 5)}`;
-                    queryClient.invalidateQueries({ queryKey: ['shifts'] });
-                  } catch (err) {
-                    const msg = err instanceof Error ? err.message : String(err);
-                    const isConflict = msg.includes('409') || msg.toLowerCase().includes('conflict');
-                    responseText = isConflict
-                      ? `⚠️ **Schedule conflict:** ${msg.replace(/.*Conflict:\s*/i, '')}`
-                      : `❌ **Failed to create shift:** ${msg}`;
+              if (canProceed) {
+                // Match shift type: prefer LLM-provided name, then score against message text
+                const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+                const needle = normalize(epShiftType ?? '');
+                const matched = needle
+                  ? (shiftTypes.find(st => normalize(st.name).includes(needle))
+                      ?? shiftTypes.find(st => needle.includes(normalize(st.name))))
+                  : findBestShiftType(trimmed, shiftTypes);
+
+                if (!matched) {
+                  // Ask user to pick shift type — store pending context for the follow-up reply
+                  setPendingContext({ action: 'select_shift_type', dates, workerId, workerDisplayName, shiftTypes });
+                  const available = shiftTypes.map(s =>
+                    `- **${s.name}** (${s.start_time.slice(0, 5)}–${s.end_time.slice(0, 5)})`
+                  ).join('\n');
+                  const dateLabel = dates.length > 1 ? dates.join(' & ') : dates[0];
+                  responseText =
+                    `ℹ️ Which shift type would you like to create on **${dateLabel}**?\n\n${available}\n\nSay **"all"** to create all shift types.`;
+                } else {
+                  // Create shift(s) immediately
+                  const lines: string[] = [];
+                  for (const date of dates) {
+                    try {
+                      await createShiftManual({
+                        worker_id: workerId,
+                        shift_type_id: matched.id,
+                        date,
+                        start_time: matched.start_time,
+                        end_time: matched.end_time,
+                        status: workerId ? 'confirmed' : 'open',
+                      });
+                      lines.push(`- **${date}** · ${matched.name} (${matched.start_time.slice(0, 5)}–${matched.end_time.slice(0, 5)}): ${workerDisplayName}`);
+                    } catch (err) {
+                      const msg = err instanceof Error ? err.message : String(err);
+                      const isConflict = msg.includes('409') || msg.toLowerCase().includes('conflict');
+                      lines.push(`- **${date}** · ${matched.name}: ${isConflict ? '⚠️ conflict' : `❌ ${msg}`}`);
+                    }
                   }
+                  responseText = `✅ **${lines.length} shift(s) created!**\n\n${lines.join('\n')}`;
+                  queryClient.invalidateQueries({ queryKey: ['shifts'] });
                 }
               }
             }

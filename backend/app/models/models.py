@@ -17,6 +17,7 @@ Base = declarative_base()
 
 class ShiftStatus(str, PyEnum):
     OPEN = "open"
+    PENDING = "pending"   # assigned worker has a pending leave request
     PROPOSED = "proposed"
     CONFIRMED = "confirmed"
     CANCELLED = "cancelled"
@@ -169,7 +170,7 @@ class LeaveRequest(Base):
 
     id = Column(Integer, primary_key=True)
     worker_id = Column(Integer, ForeignKey("workers.id"), nullable=False)
-    shift_id = Column(Integer, ForeignKey("shifts.id"))  # The shift needing coverage
+    shift_id = Column(Integer, ForeignKey("shifts.id", ondelete="SET NULL"))  # The shift needing coverage
     date = Column(Date, nullable=False)
     reason = Column(Text)
     status = Column(Enum(LeaveStatus, name="leave_status", create_type=False, values_callable=lambda x: [e.value for e in x]), default=LeaveStatus.PENDING)

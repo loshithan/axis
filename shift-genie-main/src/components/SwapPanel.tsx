@@ -207,12 +207,14 @@ export function SwapPanel() {
     queryKey: ['leave-requests', sbuCode, departmentCode, statusFilter],
     queryFn: () => fetchLeaveRequests(sbuCode, departmentCode, statusFilter),
     enabled: !!sbuCode && !!departmentCode,
+    refetchInterval: 5000,
   });
 
   const { data: escalations = [], isFetching: fetchingEsc } = useQuery({
     queryKey: ['escalations', sbuCode, departmentCode],
     queryFn: () => fetchEscalations(sbuCode, departmentCode),
     enabled: !!sbuCode && !!departmentCode,
+    refetchInterval: 10000,
   });
 
   const isFetching = tab === 'leave' ? fetchingLeave : fetchingEsc;
