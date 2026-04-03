@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import { ChatMessage } from '@/types/shift';
 import { useAxis } from '@/context/AxisContext';
-import { orchestratorProcess, generateSchedule, searchWorker, fetchShifts, createLeaveRequest } from '@/lib/api';
+import { orchestratorProcess, generateSchedule, searchWorker, fetchShifts, createLeaveRequest, ScheduleSlotResult } from '@/lib/api';
 
 const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
@@ -17,7 +17,8 @@ const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june',
 
 function parseDateFromText(text: string): string {
   const today = new Date();
-  const lower = text.toLowerCase();
+  // strip ordinal suffixes: "7th" → "7", "1st" → "1", "22nd" → "22"
+  const lower = text.toLowerCase().replace(/(\d+)(?:st|nd|rd|th)\b/g, '$1');
 
   if (lower.includes('tomorrow')) {
     const d = new Date(today);
@@ -48,20 +49,26 @@ function parseDateFromText(text: string): string {
     return `${y}-${m}-${day}`;
   }
 
+  // extract explicit 4-digit year if present (e.g. "7 april 2026")
+  const yearMatch = lower.match(/\b(20\d{2})\b/);
+  const year = yearMatch ? parseInt(yearMatch[1]) : today.getFullYear();
+  // remove the year token so it doesn't get mistaken for a day number
+  const lowerNoYear = yearMatch ? lower.replace(yearMatch[1], '') : lower;
+
   for (let i = 0; i < MONTHS.length; i++) {
-    // "may 10" — digit must NOT be followed by am/pm (avoids "may 3am")
-    const afterMonth = lower.match(new RegExp(`${MONTHS[i]}\\s+(\\d{1,2})(?!\\s*[ap]m)`));
+    // "april 10" — digit must NOT be followed by more digits (avoids partial year match) or am/pm
+    const afterMonth = lowerNoYear.match(new RegExp(`${MONTHS[i]}\\s+(\\d{1,2})(?!\\d)(?!\\s*[ap]m)`));
     if (afterMonth) {
       const mo = String(i + 1).padStart(2, '0');
       const dy = String(parseInt(afterMonth[1])).padStart(2, '0');
-      return `${today.getFullYear()}-${mo}-${dy}`;
+      return `${year}-${mo}-${dy}`;
     }
-    // "10 may" — digit before month name
-    const beforeMonth = lower.match(new RegExp(`(\\d{1,2})\\s+${MONTHS[i]}`));
+    // "10 april" — digit before month name, not preceded by more digits
+    const beforeMonth = lowerNoYear.match(new RegExp(`(?<!\\d)(\\d{1,2})\\s+${MONTHS[i]}`));
     if (beforeMonth) {
       const mo = String(i + 1).padStart(2, '0');
       const dy = String(parseInt(beforeMonth[1])).padStart(2, '0');
-      return `${today.getFullYear()}-${mo}-${dy}`;
+      return `${year}-${mo}-${dy}`;
     }
   }
 
@@ -159,13 +166,24 @@ function parseTimeRange(text: string): { start_time?: string; end_time?: string 
 function buildAssistantResponse(
   intent: string,
   routed_to: string,
-  scheduleResult?: { filled: number; escalated: number; total_slots: number; reasoning_summary: string },
+  scheduleResult?: { filled: number; escalated: number; total_slots: number; reasoning_summary: string; slots?: ScheduleSlotResult[] },
 ): string {
   if (intent === 'schedule' && scheduleResult) {
-    const { filled, escalated, total_slots, reasoning_summary } = scheduleResult;
+    const { filled, escalated, total_slots, reasoning_summary, slots } = scheduleResult;
+
+    let assignmentLines = '';
+    if (slots && slots.length > 0) {
+      assignmentLines = '\n**Assignments:**\n' + slots.map(s => {
+        const worker = s.assigned_worker ?? '—';
+        const status = s.status === 'escalated' ? ' ⚠️ escalated' : '';
+        return `- **${s.shift_type}**: ${worker}${status}`;
+      }).join('\n') + '\n';
+    }
+
     return (
-      `✅ **Schedule generated!**\n\n` +
-      `- **Slots processed:** ${total_slots}\n` +
+      `✅ **Schedule generated!**\n` +
+      assignmentLines +
+      `\n- **Slots processed:** ${total_slots}\n` +
       `- **Filled:** ${filled}\n` +
       `- **Escalated to manager:** ${escalated}\n\n` +
       `${reasoning_summary}\n\n` +
@@ -288,6 +306,25 @@ export function ChatPanel() {
             }
           } else {
             responseText = `⚠️ I detected a swap/leave request but could not identify the worker name or date. Please be more specific, e.g. "Amara Perera is on leave on 5th May".`;
+          }
+
+        } else if (routing.intent === 'query') {
+          // Prefer dates extracted by the LLM orchestrator; regex is only a fallback
+          // when no LLM key is configured
+          const ep = routing.extracted_params as Record<string, unknown>;
+          const { start: regexStart, end: regexEnd } = parseDateRangeFromText(trimmed);
+          const qStart = (ep.date_range_start as string) || regexStart;
+          const qEnd   = (ep.date_range_end   as string) || regexEnd;
+          const shifts = await fetchShifts(sbuCode, departmentCode, qStart, qEnd);
+          if (shifts.length === 0) {
+            responseText = `📋 No shifts found for **${qStart}**${qStart !== qEnd ? ` – **${qEnd}**` : ''} in this department.`;
+          } else {
+            const lines = shifts.map(s =>
+              `- **${s.shift_type_name}** (${s.start_time.slice(0, 5)}–${s.end_time.slice(0, 5)}): ${s.worker_name || '—'} \`[${s.status}]\``
+            );
+            responseText =
+              `📋 **Shifts for ${qStart}${qStart !== qEnd ? ` – ${qEnd}` : ''}:**\n\n` +
+              lines.join('\n');
           }
 
         } else {

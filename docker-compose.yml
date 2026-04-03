@@ -46,7 +46,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001
 
   # ── Vite/React Frontend (shift-genie-main) ──
   shift-genie:
@@ -62,8 +62,10 @@ services:
       - "8080:8080"
     volumes:
       - ./shift-genie-main/src:/app/src
+      - shift_node_modules:/app/node_modules
     depends_on:
       - backend
 
 volumes:
   pgdata:
+  shift_node_modules:

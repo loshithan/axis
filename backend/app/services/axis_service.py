@@ -862,10 +862,25 @@ async def orchestrator_process_message(message: str, sbu_code: str, session_id: 
     msg_l = message.lower()
     intent = "query"
     routed = "direct_response"
-    if any(w in msg_l for w in ("schedule", "roster", "shift", "assign")):
-        intent, routed = "schedule", "scheduler"
-    elif any(w in msg_l for w in ("leave", "swap", "cover", "replacement")):
+
+    query_verbs = ("show", "give", "get", "list", "fetch", "what", "who", "display", "view")
+    action_verbs = ("schedule", "assign", "create", "generate", "roster", "make", "set up", "build")
+
+    has_query_verb  = any(w in msg_l for w in query_verbs)
+    has_action_verb = any(w in msg_l for w in action_verbs)
+    has_shift_word  = any(w in msg_l for w in ("shift", "roster"))
+    has_swap_word   = any(w in msg_l for w in ("leave", "swap", "cover", "replacement"))
+
+    if has_swap_word:
         intent, routed = "swap", "swap_agent"
+    elif has_action_verb and has_shift_word:
+        intent, routed = "schedule", "scheduler"
+    elif has_shift_word and has_query_verb:
+        intent, routed = "query", "shift_query"
+    elif has_shift_word:
+        # ambiguous — default to query (read-only is safer)
+        intent, routed = "query", "shift_query"
+
     return {
         "intent": intent,
         "routed_to": routed,

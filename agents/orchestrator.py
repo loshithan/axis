@@ -40,8 +40,13 @@ RESPOND ONLY WITH JSON (no markdown, no backticks):
 Intent classification rules:
 - "schedule": Any request to create, assign, or generate shifts/rosters
 - "swap": Any request about leave, replacement, coverage, or shift exchange. Extract worker_name and leave_date.
-- "query": Questions about staff, availability, schedule status
+- "query": Questions about existing shifts, staff, availability, or schedule status. Always extract date_range_start and date_range_end even for single-day queries.
 - "report": Requests for compliance reports, fairness summaries, dashboards
+
+Date rules:
+- Always resolve relative dates ("tomorrow", "next week", "7th April") to absolute YYYY-MM-DD using Today's date provided above.
+- For a single day query, set date_range_start and date_range_end to the same date.
+- Never leave date fields null if a date was mentioned in the message.
 """
 
 
