@@ -202,6 +202,7 @@ class ShiftListItem(BaseModel):
     id: int
     worker_id: Optional[int] = None
     worker_name: str
+    worker_type: str = ""  # nurse, doctor, technician, admin
     shift_type_id: int
     shift_type_name: str
     department_code: str

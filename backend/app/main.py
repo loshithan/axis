@@ -168,6 +168,7 @@ async def list_shifts(
             id=r.id,
             worker_id=r.worker_id,
             worker_name=r.worker.name if r.worker else "",
+            worker_type=r.worker.employee_type if r.worker else "",
             shift_type_id=r.shift_type_id,
             shift_type_name=r.shift_type.name if r.shift_type else "",
             department_code=r.shift_type.department_code if r.shift_type else "",
@@ -243,6 +244,7 @@ async def create_shift_manual(
         id=shift.id,
         worker_id=shift.worker_id,
         worker_name=shift.worker.name if shift.worker else "",
+        worker_type=shift.worker.employee_type if shift.worker else "",
         shift_type_id=shift.shift_type_id,
         shift_type_name=shift.shift_type.name if shift.shift_type else "",
         department_code=shift.shift_type.department_code if shift.shift_type else "",
@@ -319,6 +321,7 @@ async def update_shift(
         id=shift.id,
         worker_id=shift.worker_id,
         worker_name=shift.worker.name if shift.worker else "",
+        worker_type=shift.worker.employee_type if shift.worker else "",
         shift_type_id=shift.shift_type_id,
         shift_type_name=shift.shift_type.name if shift.shift_type else "",
         department_code=shift.shift_type.department_code if shift.shift_type else "",
@@ -366,6 +369,7 @@ async def list_all_employees(
             "name": r.name,
             "email": r.email,
             "phone": r.phone,
+            "employee_type": r.employee_type or "nurse",
             "department_code": r.department.code if r.department else "",
             "department_name": r.department.name if r.department else "",
             "sbu_code": r.department.sbu.code if r.department and r.department.sbu else "",
@@ -387,6 +391,7 @@ async def search_worker(
 ):
     stmt = (
         select(Worker)
+        .options(selectinload(Worker.department))
         .join(Department, Department.id == Worker.department_id)
         .join(SBU, SBU.id == Department.sbu_id)
         .where(SBU.code == sbu_code, Worker.is_active.is_(True), Worker.name.ilike(f"%{name}%"))
@@ -420,6 +425,7 @@ async def list_workers(
             "employee_id": r.employee_id,
             "name": r.name,
             "email": r.email,
+            "employee_type": r.employee_type or "nurse",
             "certifications": list(r.certifications or []),
             "max_weekly_hours": r.max_weekly_hours,
         }

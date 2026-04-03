@@ -68,78 +68,101 @@ def seed():
     hospitals_workers = [
         # ICU Nurses
         {"eid": "HH-001", "name": "Amara Perera", "email": "amara@hemas.lk", "dept": "icu",
-         "certs": ["icu_certified", "bls", "acls", "registered_nurse"], "max_hrs": 40},
+         "type": "nurse", "certs": ["icu_certified", "bls", "acls", "registered_nurse"], "max_hrs": 40},
         {"eid": "HH-002", "name": "Kavinda Silva", "email": "kavinda@hemas.lk", "dept": "icu",
-         "certs": ["icu_certified", "bls", "registered_nurse"], "max_hrs": 40},
+         "type": "nurse", "certs": ["icu_certified", "bls", "registered_nurse"], "max_hrs": 40},
         {"eid": "HH-003", "name": "Nethmi Fernando", "email": "nethmi@hemas.lk", "dept": "icu",
-         "certs": ["icu_certified", "bls", "acls", "registered_nurse"], "max_hrs": 40},
+         "type": "nurse", "certs": ["icu_certified", "bls", "acls", "registered_nurse"], "max_hrs": 40},
         {"eid": "HH-004", "name": "Dinesh Rajapaksa", "email": "dinesh@hemas.lk", "dept": "icu",
-         "certs": ["icu_certified", "bls", "registered_nurse"], "max_hrs": 40},
+         "type": "nurse", "certs": ["icu_certified", "bls", "registered_nurse"], "max_hrs": 40},
         {"eid": "HH-005", "name": "Sachini Wickrama", "email": "sachini@hemas.lk", "dept": "icu",
-         "certs": ["icu_certified", "bls", "registered_nurse"], "max_hrs": 36},
+         "type": "nurse", "certs": ["icu_certified", "bls", "registered_nurse"], "max_hrs": 36},
         {"eid": "HH-006", "name": "Ruwan Bandara", "email": "ruwan@hemas.lk", "dept": "icu",
-         "certs": ["icu_certified", "bls", "acls", "registered_nurse"], "max_hrs": 40},
+         "type": "nurse", "certs": ["icu_certified", "bls", "acls", "registered_nurse"], "max_hrs": 40},
+        # ICU Doctors
+        {"eid": "HH-007", "name": "Dr. Pradeep Samarasinghe", "email": "pradeep.dr@hemas.lk", "dept": "icu",
+         "type": "doctor", "certs": ["icu_certified", "acls", "mbbs"], "max_hrs": 48},
+        {"eid": "HH-008", "name": "Dr. Chathuri Wimalasena", "email": "chathuri.dr@hemas.lk", "dept": "icu",
+         "type": "doctor", "certs": ["icu_certified", "acls", "mbbs"], "max_hrs": 48},
         # Emergency Nurses
         {"eid": "HH-011", "name": "Tharushi Jayawardena", "email": "tharushi@hemas.lk", "dept": "emergency",
-         "certs": ["emergency_certified", "bls", "acls", "registered_nurse"], "max_hrs": 40},
+         "type": "nurse", "certs": ["emergency_certified", "bls", "acls", "registered_nurse"], "max_hrs": 40},
         {"eid": "HH-012", "name": "Chamara Dissanayake", "email": "chamara@hemas.lk", "dept": "emergency",
-         "certs": ["emergency_certified", "bls", "acls", "registered_nurse"], "max_hrs": 40},
+         "type": "nurse", "certs": ["emergency_certified", "bls", "acls", "registered_nurse"], "max_hrs": 40},
         {"eid": "HH-013", "name": "Ishara Kumari", "email": "ishara@hemas.lk", "dept": "emergency",
-         "certs": ["emergency_certified", "bls", "acls", "registered_nurse"], "max_hrs": 40},
+         "type": "nurse", "certs": ["emergency_certified", "bls", "acls", "registered_nurse"], "max_hrs": 40},
         {"eid": "HH-014", "name": "Malith Perera", "email": "malith@hemas.lk", "dept": "emergency",
-         "certs": ["emergency_certified", "bls", "acls", "registered_nurse"], "max_hrs": 40},
+         "type": "nurse", "certs": ["emergency_certified", "bls", "acls", "registered_nurse"], "max_hrs": 40},
         {"eid": "HH-015", "name": "Priyanka De Silva", "email": "priyanka@hemas.lk", "dept": "emergency",
-         "certs": ["emergency_certified", "bls", "registered_nurse"], "max_hrs": 36},
+         "type": "nurse", "certs": ["emergency_certified", "bls", "registered_nurse"], "max_hrs": 36},
         {"eid": "HH-016", "name": "Nuwan Gamage", "email": "nuwan@hemas.lk", "dept": "emergency",
-         "certs": ["emergency_certified", "bls", "acls", "registered_nurse"], "max_hrs": 40},
-        # General Ward
+         "type": "nurse", "certs": ["emergency_certified", "bls", "acls", "registered_nurse"], "max_hrs": 40},
+        # Emergency Doctors
+        {"eid": "HH-017", "name": "Dr. Ruwani Gunawardena", "email": "ruwani.dr@hemas.lk", "dept": "emergency",
+         "type": "doctor", "certs": ["emergency_certified", "acls", "mbbs"], "max_hrs": 48},
+        {"eid": "HH-018", "name": "Dr. Harsha Nanayakkara", "email": "harsha.dr@hemas.lk", "dept": "emergency",
+         "type": "doctor", "certs": ["emergency_certified", "acls", "mbbs"], "max_hrs": 48},
+        # General Ward Nurses
         {"eid": "HH-021", "name": "Sanduni Rathnayake", "email": "sanduni@hemas.lk", "dept": "ward_general",
-         "certs": ["registered_nurse", "bls"], "max_hrs": 40},
+         "type": "nurse", "certs": ["registered_nurse", "bls"], "max_hrs": 40},
         {"eid": "HH-022", "name": "Lakmal Jayasuriya", "email": "lakmal@hemas.lk", "dept": "ward_general",
-         "certs": ["registered_nurse", "bls"], "max_hrs": 40},
+         "type": "nurse", "certs": ["registered_nurse", "bls"], "max_hrs": 40},
         {"eid": "HH-023", "name": "Hashini Abeysekara", "email": "hashini@hemas.lk", "dept": "ward_general",
-         "certs": ["registered_nurse"], "max_hrs": 40},
+         "type": "nurse", "certs": ["registered_nurse"], "max_hrs": 40},
         {"eid": "HH-024", "name": "Asanka Wijesinghe", "email": "asanka@hemas.lk", "dept": "ward_general",
-         "certs": ["registered_nurse", "bls"], "max_hrs": 40},
+         "type": "nurse", "certs": ["registered_nurse", "bls"], "max_hrs": 40},
         {"eid": "HH-025", "name": "Dilhani Mendis", "email": "dilhani@hemas.lk", "dept": "ward_general",
-         "certs": ["registered_nurse"], "max_hrs": 36},
+         "type": "nurse", "certs": ["registered_nurse"], "max_hrs": 36},
+        # Operation Theatre
+        {"eid": "HH-031", "name": "Dr. Suresh Amaratunga", "email": "suresh.dr@hemas.lk", "dept": "ot",
+         "type": "doctor", "certs": ["mbbs", "surgery_certified", "acls"], "max_hrs": 48},
+        {"eid": "HH-032", "name": "Dr. Nilmini Rodrigo", "email": "nilmini.dr@hemas.lk", "dept": "ot",
+         "type": "doctor", "certs": ["mbbs", "surgery_certified", "acls"], "max_hrs": 48},
+        {"eid": "HH-033", "name": "Dr. Prasad Jayatilake", "email": "prasad.dr@hemas.lk", "dept": "ot",
+         "type": "doctor", "certs": ["mbbs", "anesthesia_certified", "acls"], "max_hrs": 48},
+        {"eid": "HH-034", "name": "Madhavi Seneviratne", "email": "madhavi@hemas.lk", "dept": "ot",
+         "type": "nurse", "certs": ["ot_certified", "registered_nurse", "bls"], "max_hrs": 40},
+        {"eid": "HH-035", "name": "Chaminda Pathirana", "email": "chaminda@hemas.lk", "dept": "ot",
+         "type": "technician", "certs": ["ot_tech_certified", "safety_trained"], "max_hrs": 40},
     ]
 
     cur.execute("SELECT id FROM sbus WHERE code='hospitals'")
     hosp_sbu_id = cur.fetchone()[0]
-    
+
     for w in hospitals_workers:
         cur.execute("SELECT id FROM departments WHERE sbu_id=%s AND code=%s", (hosp_sbu_id, w["dept"]))
         dept_row = cur.fetchone()
         if dept_row:
             cur.execute("""
-                INSERT INTO workers (employee_id, name, email, department_id, certifications, max_weekly_hours)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (employee_id) DO NOTHING
-            """, (w["eid"], w["name"], w["email"], dept_row[0], json.dumps(w["certs"]), w["max_hrs"]))
+                INSERT INTO workers (employee_id, name, email, department_id, employee_type, certifications, max_weekly_hours)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (employee_id) DO UPDATE SET
+                    employee_type = EXCLUDED.employee_type,
+                    certifications = EXCLUDED.certifications
+            """, (w["eid"], w["name"], w["email"], dept_row[0], w["type"], json.dumps(w["certs"]), w["max_hrs"]))
 
     # ── 5. Workers (Mobility) ──
     mobility_workers = [
         {"eid": "HM-001", "name": "Kasun Ratnayake", "email": "kasun@hemas.lk", "dept": "ground_crew",
-         "certs": ["ground_ops_certified", "safety_trained", "aviation_certified"], "max_hrs": 48},
+         "type": "technician", "certs": ["ground_ops_certified", "safety_trained", "aviation_certified"], "max_hrs": 48},
         {"eid": "HM-002", "name": "Thilina Weerasinghe", "email": "thilina@hemas.lk", "dept": "ground_crew",
-         "certs": ["ground_ops_certified", "safety_trained"], "max_hrs": 48},
+         "type": "technician", "certs": ["ground_ops_certified", "safety_trained"], "max_hrs": 48},
         {"eid": "HM-003", "name": "Nadeeka Subasinghe", "email": "nadeeka@hemas.lk", "dept": "ground_crew",
-         "certs": ["ground_ops_certified", "safety_trained", "aviation_certified"], "max_hrs": 48},
+         "type": "technician", "certs": ["ground_ops_certified", "safety_trained", "aviation_certified"], "max_hrs": 48},
         {"eid": "HM-004", "name": "Roshan Jayawickrama", "email": "roshan@hemas.lk", "dept": "ground_crew",
-         "certs": ["ground_ops_certified", "safety_trained"], "max_hrs": 48},
+         "type": "technician", "certs": ["ground_ops_certified", "safety_trained"], "max_hrs": 48},
         {"eid": "HM-005", "name": "Supun Herath", "email": "supun@hemas.lk", "dept": "ground_crew",
-         "certs": ["ground_ops_certified", "safety_trained"], "max_hrs": 44},
+         "type": "technician", "certs": ["ground_ops_certified", "safety_trained"], "max_hrs": 44},
         {"eid": "HM-011", "name": "Charith Mendis", "email": "charith@hemas.lk", "dept": "maritime_ops",
-         "certs": ["maritime_certified", "safety_trained"], "max_hrs": 48},
+         "type": "technician", "certs": ["maritime_certified", "safety_trained"], "max_hrs": 48},
         {"eid": "HM-012", "name": "Geethika Peiris", "email": "geethika@hemas.lk", "dept": "maritime_ops",
-         "certs": ["maritime_certified", "safety_trained"], "max_hrs": 48},
+         "type": "technician", "certs": ["maritime_certified", "safety_trained"], "max_hrs": 48},
         {"eid": "HM-013", "name": "Ashan Karunaratne", "email": "ashan@hemas.lk", "dept": "maritime_ops",
-         "certs": ["maritime_certified", "safety_trained"], "max_hrs": 48},
+         "type": "technician", "certs": ["maritime_certified", "safety_trained"], "max_hrs": 48},
         {"eid": "HM-021", "name": "Yamuna Liyanage", "email": "yamuna@hemas.lk", "dept": "dispatch",
-         "certs": ["dispatch_certified"], "max_hrs": 48},
+         "type": "admin", "certs": ["dispatch_certified"], "max_hrs": 48},
         {"eid": "HM-022", "name": "Prabath Wickramarachchi", "email": "prabath@hemas.lk", "dept": "dispatch",
-         "certs": ["dispatch_certified"], "max_hrs": 48},
+         "type": "admin", "certs": ["dispatch_certified"], "max_hrs": 48},
     ]
 
     cur.execute("SELECT id FROM sbus WHERE code='mobility'")
@@ -150,10 +173,12 @@ def seed():
         dept_row = cur.fetchone()
         if dept_row:
             cur.execute("""
-                INSERT INTO workers (employee_id, name, email, department_id, certifications, max_weekly_hours)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (employee_id) DO NOTHING
-            """, (w["eid"], w["name"], w["email"], dept_row[0], json.dumps(w["certs"]), w["max_hrs"]))
+                INSERT INTO workers (employee_id, name, email, department_id, employee_type, certifications, max_weekly_hours)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (employee_id) DO UPDATE SET
+                    employee_type = EXCLUDED.employee_type,
+                    certifications = EXCLUDED.certifications
+            """, (w["eid"], w["name"], w["email"], dept_row[0], w["type"], json.dumps(w["certs"]), w["max_hrs"]))
 
     # ── 6. Availability (next 90 days for all workers) ──
     print("  Generating availability for next 90 days...")

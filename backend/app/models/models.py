@@ -98,6 +98,7 @@ class Worker(Base):
     email = Column(String(200))
     phone = Column(String(20))
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=False)
+    employee_type = Column(String(50), default="nurse")  # nurse, doctor, technician, admin
     certifications = Column(JSON, default=list)  # List of cert codes
     max_weekly_hours = Column(Float, default=40.0)
     is_active = Column(Boolean, default=True)

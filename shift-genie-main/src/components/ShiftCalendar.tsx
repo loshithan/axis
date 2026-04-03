@@ -25,17 +25,15 @@ const ROLE_BG: Record<ShiftRole, string> = {
   admin: 'hsla(340, 72%, 45%, 0.12)',
 };
 
-const DEPT_TO_ROLE: Record<string, ShiftRole> = {
-  icu: 'nurse',
-  emergency: 'nurse',
-  ward_general: 'nurse',
-  ground_crew: 'tech',
-  maritime_ops: 'tech',
-  dispatch: 'admin',
+const WORKER_TYPE_TO_ROLE: Record<string, ShiftRole> = {
+  nurse: 'nurse',
+  doctor: 'doctor',
+  technician: 'tech',
+  admin: 'admin',
 };
 
-function toRole(departmentCode: string): ShiftRole {
-  return DEPT_TO_ROLE[departmentCode] ?? 'admin';
+function toRole(workerType: string): ShiftRole {
+  return WORKER_TYPE_TO_ROLE[workerType] ?? 'admin';
 }
 
 function combineDateTime(dateStr: string, timeStr: string): Date {
@@ -60,7 +58,7 @@ function itemToShift(item: ShiftListItem): Shift & { _raw: ShiftListItem } {
       : `${timeRange} — (${item.shift_type_name} — ${item.worker_name})`,
     start,
     end,
-    role: toRole(item.department_code),
+    role: toRole(item.worker_type),
     employee: item.worker_name || undefined,
     _raw: item,
   };
@@ -178,10 +176,10 @@ export function ShiftCalendar() {
         </div>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-4 text-xs text-muted-foreground">
-            {Object.entries(ROLE_COLORS).map(([role, color]) => (
+            {(Object.entries(ROLE_COLORS) as [ShiftRole, string][]).map(([role, color]) => (
               <div key={role} className="flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
-                <span className="capitalize">{role}</span>
+                <span className="capitalize">{role === 'tech' ? 'technician' : role}</span>
               </div>
             ))}
           </div>

@@ -9,6 +9,7 @@ interface Employee {
   name: string;
   email: string | null;
   phone: string | null;
+  employee_type: string;
   department_code: string;
   department_name: string;
   sbu_code: string;
@@ -19,6 +20,22 @@ interface Employee {
   created_at: string | null;
 }
 
+const EMPLOYEE_TYPE_STYLES: Record<string, { label: string; className: string }> = {
+  doctor:     { label: 'Doctor',      className: 'bg-blue-500/15 text-blue-400' },
+  nurse:      { label: 'Nurse',       className: 'bg-purple-500/15 text-purple-400' },
+  technician: { label: 'Technician',  className: 'bg-orange-500/15 text-orange-400' },
+  admin:      { label: 'Admin',       className: 'bg-pink-500/15 text-pink-400' },
+};
+
+function EmployeeTypeBadge({ type }: { type: string }) {
+  const style = EMPLOYEE_TYPE_STYLES[type] ?? { label: type, className: 'bg-muted text-muted-foreground' };
+  return (
+    <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize ${style.className}`}>
+      {style.label}
+    </span>
+  );
+}
+
 const BASE_URL = (import.meta.env.VITE_API_URL as string) ?? 'http://localhost:8001';
 
 function fetchEmployees(sbu_code: string): Promise<Employee[]> {
@@ -27,7 +44,7 @@ function fetchEmployees(sbu_code: string): Promise<Employee[]> {
   return fetch(url.toString()).then(r => r.json());
 }
 
-type SortField = 'name' | 'employee_id' | 'department_name' | 'max_weekly_hours';
+type SortField = 'name' | 'employee_id' | 'employee_type' | 'department_name' | 'max_weekly_hours';
 type SortDir = 'asc' | 'desc';
 
 function DetailModal({ emp, onClose }: { emp: Employee; onClose: () => void }) {
@@ -58,6 +75,7 @@ function DetailModal({ emp, onClose }: { emp: Employee; onClose: () => void }) {
               {emp.is_active ? 'Active' : 'Inactive'}
             </span>
           } />
+          <Row label="Employee Type" value={<EmployeeTypeBadge type={emp.employee_type} />} />
           <div className="pt-1">
             <div className="text-muted-foreground mb-1.5">Certifications</div>
             <div className="flex flex-wrap gap-1.5">
@@ -186,6 +204,7 @@ export function EmployeesPage() {
                 {([
                   { field: 'employee_id', label: 'Employee ID' },
                   { field: 'name',        label: 'Name'        },
+                  { field: 'employee_type', label: 'Type'      },
                   { field: 'department_name', label: 'Department' },
                   { field: null,          label: 'Certifications' },
                   { field: 'max_weekly_hours', label: 'Max Hrs/Wk' },
@@ -214,6 +233,7 @@ export function EmployeesPage() {
                 >
                   <td className="py-3 pr-4 text-muted-foreground font-mono text-xs">{emp.employee_id}</td>
                   <td className="py-3 pr-4 font-medium text-foreground">{emp.name}</td>
+                  <td className="py-3 pr-4"><EmployeeTypeBadge type={emp.employee_type} /></td>
                   <td className="py-3 pr-4 text-muted-foreground capitalize">{emp.department_name}</td>
                   <td className="py-3 pr-4">
                     <div className="flex flex-wrap gap-1">

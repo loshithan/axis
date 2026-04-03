@@ -27,10 +27,10 @@ RESPOND ONLY WITH JSON (no markdown, no backticks):
         "date_range_end": "YYYY-MM-DD",
         "start_time": "HH:MM:SS or null",
         "end_time": "HH:MM:SS or null",
-        "shift_type": "...",
+        "shift_type": "exact shift type name mentioned (e.g. 'Afternoon ICU', 'Morning Emergency') or null",
         "headcount": 1,
         "constraints": {},
-        "worker_name": "full name of the worker (for swap intent only, or null)",
+        "worker_name": "full name of the specific worker mentioned in the message, or null if no specific worker is named",
         "leave_date": "YYYY-MM-DD (for swap intent only, the specific date of leave, or null)"
     },
     "confidence": 0.95,
@@ -38,7 +38,7 @@ RESPOND ONLY WITH JSON (no markdown, no backticks):
 }
 
 Intent classification rules:
-- "schedule": Any request to create, assign, or generate shifts/rosters
+- "schedule": Any request to create, assign, or generate shifts/rosters. If a specific worker name is mentioned, extract it into worker_name. If a specific shift type is mentioned (e.g. "afternoon ICU"), extract it into shift_type.
 - "swap": Any request about leave, replacement, coverage, or shift exchange. Extract worker_name and leave_date.
 - "query": Questions about existing shifts, staff, availability, or schedule status. Always extract date_range_start and date_range_end even for single-day queries.
 - "report": Requests for compliance reports, fairness summaries, dashboards
