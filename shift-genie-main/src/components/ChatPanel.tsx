@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import { ChatMessage } from '@/types/shift';
 import { useAxis } from '@/context/AxisContext';
-import { orchestratorProcess, generateSchedule, searchWorker, fetchShifts, fetchShiftTypesList, createShiftManual, createLeaveRequest, ScheduleSlotResult } from '@/lib/api';
+import { orchestratorProcess, generateSchedule, searchWorker, fetchShifts, fetchShiftTypesList, createShiftManual, createLeaveRequest, ScheduleSlotResult, ShiftTypeItem } from '@/lib/api';
 
 const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
@@ -163,6 +163,41 @@ function parseTimeRange(text: string): { start_time?: string; end_time?: string 
   return {};
 }
 
+/** Extract a worker's full name from phrasing like "for Kavinda Silva" or "assign to John Doe". */
+function extractWorkerName(text: string): string | null {
+  // "for Kavinda Silva" — two or more capitalised words after "for"
+  const forMatch = text.match(/\bfor\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/);
+  if (forMatch) return forMatch[1];
+  // "assign to John Doe" or "assign John Doe"
+  const assignMatch = text.match(/\bassign(?:ed)?\s+(?:to\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/);
+  if (assignMatch) return assignMatch[1];
+  return null;
+}
+
+/** Returns true when the message is asking to create/add a single shift (not bulk-generate). */
+function isSingleShiftRequest(text: string): boolean {
+  const lower = text.toLowerCase();
+  // Bulk-generation signals → not a single-shift request
+  if (/\b(generate|roster)\b/.test(lower)) return false;
+  if (/\b(next|this)\s+(week|month)\b/.test(lower)) return false;
+  if (/\bfrom\b.+?\bto\b/.test(lower)) return false;
+  // Single-creation verbs
+  return /\b(create|add|assign|make|book|put)\b/.test(lower);
+}
+
+/** Score each shift type by how many of its name-words appear in the message text. */
+function findBestShiftType(text: string, types: ShiftTypeItem[]): ShiftTypeItem | null {
+  const lower = text.toLowerCase();
+  let best: ShiftTypeItem | null = null;
+  let bestScore = 0;
+  for (const st of types) {
+    const words = st.name.toLowerCase().split(/\s+/);
+    const score = words.filter(w => w.length > 2 && lower.includes(w)).length;
+    if (score > bestScore) { bestScore = score; best = st; }
+  }
+  return bestScore > 0 ? best : null;
+}
+
 function buildAssistantResponse(
   intent: string,
   routed_to: string,
@@ -244,133 +279,117 @@ export function ChatPanel() {
         const routing = await orchestratorProcess(trimmed, sbuCode, sessionId);
 
         if (routing.intent === 'schedule') {
-          // Step 2: Build schedule params — prefer LLM extracted_params, fall back to regex
           const ep = routing.extracted_params as Record<string, unknown>;
           const { start: regexStart, end: regexEnd } = parseDateRangeFromText(trimmed);
-          const regexTime = parseTimeRange(trimmed);
 
           const dateStart = (ep.date_range_start as string) || regexStart;
           const dateEnd   = (ep.date_range_end   as string) || regexEnd;
-          const workerName = ep.worker_name as string | null;
-          const shiftTypeName = ep.shift_type as string | null;
+          const epShiftType = ep.shift_type as string | null;
 
-          if (workerName) {
-            // Single-worker manual shift creation — do NOT call generateSchedule
-            const workers = await searchWorker(workerName, sbuCode);
-            if (workers.length === 0) {
-              responseText = `⚠️ Could not find a worker named **"${workerName}"**. Please check the name and try again.`;
+          // LLM extraction first, then regex fallback for worker name
+          const workerName = (ep.worker_name as string | null) || extractWorkerName(trimmed);
+
+          if (workerName || isSingleShiftRequest(trimmed)) {
+            // ── Single-shift creation path ──
+            const singleDate = (ep.date_range_start as string) || parseDateFromText(trimmed);
+            const shiftTypes = await fetchShiftTypesList(sbuCode, departmentCode);
+
+            if (shiftTypes.length === 0) {
+              responseText = `⚠️ No shift types found for this department. Please check your SBU/department selection.`;
             } else {
-              const worker = workers[0];
-              const [shiftTypes, existingShifts] = await Promise.all([
-                fetchShiftTypesList(sbuCode, departmentCode),
-                fetchShifts(sbuCode, departmentCode, dateStart, dateStart),
-              ]);
+              // Match shift type: prefer LLM-provided name, then score against message text
+              const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+              const needle = normalize(epShiftType ?? '');
+              const matched = needle
+                ? (shiftTypes.find(st => normalize(st.name).includes(needle))
+                    ?? shiftTypes.find(st => needle.includes(normalize(st.name))))
+                : findBestShiftType(trimmed, shiftTypes);
 
-              // ── Pre-flight check 1: Worker already has a shift today ──
-              const workerExisting = existingShifts.find(s => s.worker_id === worker.id);
-              if (workerExisting) {
-                responseText =
-                  `⚠️ **${worker.name}** already has a shift on **${dateStart}**:\n\n` +
-                  `- **${workerExisting.shift_type_name}** (${workerExisting.start_time.slice(0, 5)}–${workerExisting.end_time.slice(0, 5)}) \`[${workerExisting.status}]\`\n\n` +
-                  `A worker cannot be assigned to more than one shift per day.`;
+              if (!matched) {
+                const available = shiftTypes.map(s =>
+                  `- **${s.name}** (${s.start_time.slice(0, 5)}–${s.end_time.slice(0, 5)})`
+                ).join('\n');
+                responseText = `ℹ️ Which shift type would you like to create on **${singleDate}**?\n\n${available}`;
               } else {
-                // Match shift type by name (case-insensitive partial match)
-                const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-                const needle = normalize(shiftTypeName ?? '');
-                const matched = needle
-                  ? (shiftTypes.find(st => normalize(st.name).includes(needle))
-                      ?? shiftTypes.find(st => needle.includes(normalize(st.name))))
-                  : undefined;
+                let workerId: number | null = null;
+                let workerDisplayName = 'Open (unassigned)';
+                let canProceed = true;
 
-                if (!matched) {
-                  const available = shiftTypes.map(s =>
-                    `- **${s.name}** (${s.start_time.slice(0, 5)}–${s.end_time.slice(0, 5)})`
-                  ).join('\n');
-                  responseText = shiftTypes.length === 0
-                    ? `⚠️ No shift types found for this department. Please check your SBU/department selection.`
-                    : `ℹ️ Which shift would you like to assign **${worker.name}** to on **${dateStart}**?\n\n${available}\n\nPlease specify the shift type, e.g. *"assign Morning ICU to ${worker.name} on ${dateStart}"*`;
-                } else {
-                  // ── Pre-flight check 2: Target slot already has an assigned worker ──
-                  const slotFilled = existingShifts.filter(
-                    s => s.shift_type_id === matched.id && s.worker_id !== null
-                  );
-                  if (slotFilled.length > 0) {
-                    const assignedNames = slotFilled.map(s => `**${s.worker_name}**`).join(', ');
-                    responseText =
-                      `⚠️ **${matched.name}** on **${dateStart}** is already assigned to ${assignedNames}.\n\n` +
-                      `This shift slot is fully staffed.`;
+                if (workerName) {
+                  const workers = await searchWorker(workerName, sbuCode);
+                  if (workers.length === 0) {
+                    responseText = `⚠️ Could not find a worker named **"${workerName}"**. Please check the name and try again.`;
+                    canProceed = false;
                   } else {
-                    // ── Pre-flight check 3: All shift slots for the day are filled (full 24hr coverage) ──
-                    const assignedTypeIds = new Set(
-                      existingShifts.filter(s => s.worker_id !== null).map(s => s.shift_type_id)
-                    );
-                    const allCovered = shiftTypes.length > 0 && shiftTypes.every(st => assignedTypeIds.has(st.id));
-                    if (allCovered) {
-                      const coverageLines = shiftTypes
-                        .map(st => {
-                          const s = existingShifts.find(e => e.shift_type_id === st.id && e.worker_id !== null);
-                          return `- **${st.name}** (${st.start_time.slice(0, 5)}–${st.end_time.slice(0, 5)}): ${s?.worker_name ?? '—'}`;
-                        })
-                        .join('\n');
+                    const worker = workers[0];
+                    workerId = worker.id;
+                    workerDisplayName = worker.name;
+
+                    // Pre-flight: worker already has a shift on this date?
+                    const existingShifts = await fetchShifts(sbuCode, departmentCode, singleDate, singleDate);
+                    const workerExisting = existingShifts.find(s => s.worker_id === worker.id);
+                    if (workerExisting) {
                       responseText =
-                        `ℹ️ All **${shiftTypes.length}** shift slots for **${dateStart}** are already covered (full 24-hour coverage):\n\n` +
-                        coverageLines;
-                    } else {
-                      // All checks passed — create the shift
-                      try {
-                        await createShiftManual({
-                          worker_id: worker.id,
-                          shift_type_id: matched.id,
-                          date: dateStart,
-                          start_time: matched.start_time,
-                          end_time: matched.end_time,
-                          status: 'confirmed',
-                        });
-                        responseText =
-                          `✅ **Shift created!**\n\n` +
-                          `- **Worker:** ${worker.name}\n` +
-                          `- **Shift:** ${matched.name}\n` +
-                          `- **Date:** ${dateStart}\n` +
-                          `- **Time:** ${matched.start_time.slice(0, 5)}–${matched.end_time.slice(0, 5)}`;
-                        queryClient.invalidateQueries({ queryKey: ['shifts'] });
-                      } catch (err) {
-                        const msg = err instanceof Error ? err.message : String(err);
-                        const isConflict = msg.includes('409') || msg.toLowerCase().includes('conflict');
-                        responseText = isConflict
-                          ? `⚠️ **Schedule conflict:** ${msg.replace(/.*Conflict:\s*/i, '')}`
-                          : `❌ **Failed to create shift:** ${msg}`;
-                      }
+                        `⚠️ **${worker.name}** already has a shift on **${singleDate}**:\n\n` +
+                        `- **${workerExisting.shift_type_name}** (${workerExisting.start_time.slice(0, 5)}–${workerExisting.end_time.slice(0, 5)}) \`[${workerExisting.status}]\`\n\n` +
+                        `A worker cannot be assigned to more than one shift per day.`;
+                      canProceed = false;
                     }
+                  }
+                }
+
+                if (canProceed) {
+                  try {
+                    await createShiftManual({
+                      worker_id: workerId,
+                      shift_type_id: matched.id,
+                      date: singleDate,
+                      start_time: matched.start_time,
+                      end_time: matched.end_time,
+                      status: workerId ? 'confirmed' : 'open',
+                    });
+                    responseText =
+                      `✅ **Shift created!**\n\n` +
+                      `- **Shift:** ${matched.name}\n` +
+                      `- **Date:** ${singleDate}\n` +
+                      `- **Worker:** ${workerDisplayName}\n` +
+                      `- **Time:** ${matched.start_time.slice(0, 5)}–${matched.end_time.slice(0, 5)}`;
+                    queryClient.invalidateQueries({ queryKey: ['shifts'] });
+                  } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    const isConflict = msg.includes('409') || msg.toLowerCase().includes('conflict');
+                    responseText = isConflict
+                      ? `⚠️ **Schedule conflict:** ${msg.replace(/.*Conflict:\s*/i, '')}`
+                      : `❌ **Failed to create shift:** ${msg}`;
                   }
                 }
               }
             }
           } else {
-          // Bulk schedule generation (no specific worker named)
-          const headcount = (ep.headcount as number) || extractHeadcount(trimmed);
-          const startTime = (ep.start_time as string | null) || regexTime.start_time;
-          const endTime   = (ep.end_time   as string | null) || regexTime.end_time;
+            // ── Bulk schedule generation ──
+            const regexTime = parseTimeRange(trimmed);
+            const headcount = (ep.headcount as number) || extractHeadcount(trimmed);
+            const startTime = (ep.start_time as string | null) || regexTime.start_time;
+            const endTime   = (ep.end_time   as string | null) || regexTime.end_time;
 
-          const constraints: Record<string, unknown> = {
-            ...(ep.constraints as Record<string, unknown> | undefined),
-            ...(startTime ? { start_time: startTime } : {}),
-            ...(endTime   ? { end_time:   endTime   } : {}),
-          };
+            const constraints: Record<string, unknown> = {
+              ...(ep.constraints as Record<string, unknown> | undefined),
+              ...(startTime ? { start_time: startTime } : {}),
+              ...(endTime   ? { end_time:   endTime   } : {}),
+            };
 
-          const result = await generateSchedule({
-            sbu_code: sbuCode,
-            department_code: departmentCode,
-            date_range_start: dateStart,
-            date_range_end: dateEnd,
-            headcount_per_shift: headcount,
-            session_id: sessionId,
-            ...(Object.keys(constraints).length ? { constraints } : {}),
-          });
+            const result = await generateSchedule({
+              sbu_code: sbuCode,
+              department_code: departmentCode,
+              date_range_start: dateStart,
+              date_range_end: dateEnd,
+              headcount_per_shift: headcount,
+              session_id: sessionId,
+              ...(Object.keys(constraints).length ? { constraints } : {}),
+            });
 
-          responseText = buildAssistantResponse('schedule', routing.routed_to, result);
-
-          // Refresh the calendar
-          queryClient.invalidateQueries({ queryKey: ['shifts'] });
+            responseText = buildAssistantResponse('schedule', routing.routed_to, result);
+            queryClient.invalidateQueries({ queryKey: ['shifts'] });
           }
 
         } else if (routing.intent === 'swap') {
